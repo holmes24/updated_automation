@@ -34,6 +34,10 @@ export async function resolveAttendance(
   return data;
 }
 
+export async function deleteAttendance(submission_id: string) {
+  await apiClient.delete(`/attendance/${submission_id}`);
+}
+
 // --- Manual entry ---------------------------------------------------------
 // POST /attendance/manual is the deliberate backdoor for when the WhatsApp/
 // AI pipeline fails. A 409 means a submission already exists for this

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { listAttendance } from '../api/attendance';
+import { deleteAttendance, listAttendance } from '../api/attendance';
 import { listCoordinators } from '../api/coordinators';
 import { listEmployees } from '../api/employees';
 import type { AttendanceRecord, Coordinator, Employee, Verdict } from '../types';
@@ -7,6 +7,7 @@ import { ReviewStatusBadge, ShiftStatusBadge, FaceMatchStatus } from '../compone
 import { ResolveModal } from '../components/ResolveModal';
 import { ExportPanel } from '../components/ExportPanel';
 import { ManualEntryModal } from '../components/ManualEntryModal';
+import { Trash2 } from 'lucide-react';
 
 const VERDICT_FILTERS: { label: string; value: Verdict | '' }[] = [
   { label: 'All', value: '' },
@@ -22,7 +23,7 @@ function attendanceMarker(record: AttendanceRecord): string {
   if (record.verdict === 'inactive_account') return 'N/A';
   if (record.review_status === 'rejected') return 'A';
   if (record.verdict === 'flagged' && record.review_status !== 'approved') return 'F';
-  if (record.shift_status === 'after_grace' || record.shift_status === 'after_window' || record.attendance_status === 'absent_late') return 'AL';
+  if (record.shift_status === 'after_window' || record.attendance_status === 'absent_late') return 'AL';
   if (record.shift_status === 'late' || record.attendance_status === 'late') return 'L';
   if (record.attendance_status === 'absent') return 'A';
   if (record.attendance_status === 'pending') return 'F';
@@ -48,6 +49,7 @@ export function AttendancePage() {
   const [search, setSearch] = useState('');
 
   const [resolving, setResolving] = useState<AttendanceRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
 
@@ -101,6 +103,26 @@ export function AttendancePage() {
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  async function removeAttendance(record: AttendanceRecord) {
+    const employeeName = employeeMap[record.employee_id]?.name ?? record.employee_id;
+    if (!window.confirm(`Permanently delete the attendance record for ${employeeName}?`)) return;
+
+    setDeletingId(record._id);
+    setError(null);
+    try {
+      await deleteAttendance(record._id);
+      setRecords((current) => current.filter((item) => item._id !== record._id));
+      setTotal((current) => Math.max(0, current - 1));
+      if (records.length === 1 && page > 1) {
+        setPage((current) => current - 1);
+      }
+    } catch {
+      setError('Could not delete the attendance record. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <div>
@@ -312,6 +334,16 @@ export function AttendancePage() {
                       Review
                     </button>
                   )}
+                  <button
+                    onClick={() => removeAttendance(r)}
+                    disabled={deletingId === r._id}
+                    className="ml-2 p-1 rounded transition-colors hover:bg-black/5 disabled:opacity-50"
+                    style={{ color: 'var(--color-absent)' }}
+                    title="Delete attendance record"
+                    aria-label={`Delete attendance record for ${employeeMap[r.employee_id]?.name ?? r.employee_id}`}
+                  >
+                    <Trash2 size={15} />
+                  </button>
                 </td>
               </tr>
             ))}

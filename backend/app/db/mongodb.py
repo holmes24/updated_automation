@@ -466,6 +466,19 @@ async def list_attendance(
     return results, total
 
 
+async def delete_attendance_submission(submission_id: str) -> bool:
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    try:
+        object_id = ObjectId(submission_id)
+    except InvalidId:
+        return False
+
+    result = await get_db().submissions.delete_one({"_id": object_id})
+    return result.deleted_count == 1
+
+
 async def has_submission_today(employee_id: str, date_str: str) -> bool:
     """Checks whether this employee already has ANY submission for the date."""
     norm_date = normalize_date_str(date_str)

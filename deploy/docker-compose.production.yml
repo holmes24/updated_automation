@@ -20,6 +20,16 @@ services:
     depends_on: [redis, mongo]
     networks: [attendance]
 
+  absence-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    env_file: ../backend/.env
+    command: ["python", "-m", "app.absence_worker"]
+    restart: unless-stopped
+    depends_on: [redis, mongo]
+    networks: [attendance]
+
   notification-worker:
     build:
       context: ..
@@ -34,6 +44,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
+      args:
+        VITE_SHARED_API_KEY: ${APP_API_KEY:?Set APP_API_KEY in the Compose environment}
     restart: unless-stopped
     networks: [attendance]
 
@@ -56,17 +68,16 @@ services:
     restart: unless-stopped
     volumes:
       - redis-data:/data
-    networks: [attendance]
+    networks:
+      - attendance
 
   mongo:
     image: mongo:8
     restart: unless-stopped
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
     volumes:
       - mongo-data:/data/db
-    networks: [attendance]
+    networks:
+      - attendance
 
 networks:
   attendance:

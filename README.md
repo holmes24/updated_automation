@@ -164,6 +164,8 @@ Nginx terminates TLS and proxies the webhook/admin traffic to FastAPI. Use a rea
 
 The supplied `deploy/docker-compose.production.yml` starts backend, one or more workers, notification worker, frontend, Nginx, Redis and MongoDB.
 
+For local HTTP testing, run `docker compose --env-file backend/.env -f deploy/docker-compose.production.yml -f deploy/docker-compose.local.yml up --build -d`. Open `http://localhost:8080`; MongoDB is available to Compass at `mongodb://localhost:27018`.
+
 ## WhatsApp / Interakt
 
 Configure Interakt to POST signed `message_received` webhooks to:
@@ -176,7 +178,7 @@ Set `INTERAKT_WEBHOOK_SECRET` and `INTERAKT_API_KEY` only in `.env`/secret stora
 
 ## Admin review
 
-The React Attendance page shows P/L/F/A/N/A status for returned submission records and exposes human-readable reasons. Flagged records can be approved or rejected. Review details include server received time, OCR time, geofence, liveness and duplicate/reuse evidence. Face embedding vectors are never returned to the frontend.
+The React Attendance page shows P/L/F/A/N/A status for returned submission records and exposes human-readable reasons. Flagged records can be approved or rejected, and admins can permanently delete an individual attendance record from the table. Review details include server received time, OCR time, geofence, liveness and duplicate/reuse evidence. Face embedding vectors are never returned to the frontend.
 
 ## Fraud test checklist
 

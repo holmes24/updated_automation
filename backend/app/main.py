@@ -40,6 +40,7 @@ from app.db.mongodb import (
     update_coordinator,
     update_employee_details,
     create_manual_attendance,
+    delete_attendance_submission,
     register_webhook_event,
     mark_webhook_queued,
 )
@@ -446,6 +447,16 @@ async def get_attendance(
         "count": len(records), "total": total, "page": page, "page_size": page_size,
         "records": records,
     }
+
+
+@app.delete("/attendance/{submission_id}")
+async def delete_attendance(
+    submission_id: str, admin: AdminUser = Depends(get_current_admin)
+):
+    """Permanently delete one attendance submission from the attendance records."""
+    if not await delete_attendance_submission(submission_id):
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+    return {"status": "deleted"}
 
 
 @app.post("/attendance/manual")

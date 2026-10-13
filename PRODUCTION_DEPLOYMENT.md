@@ -93,11 +93,11 @@ Production Docker:
 
 ```bash
 cd deploy
-export MONGO_ROOT_USERNAME='strong-admin-user'
-export MONGO_ROOT_PASSWORD='strong-random-password'
-docker compose -f docker-compose.production.yml build
-docker compose -f docker-compose.production.yml up -d
+docker compose --env-file ../backend/.env -f docker-compose.production.yml build
+docker compose --env-file ../backend/.env -f docker-compose.production.yml up -d
 ```
+
+The frontend build embeds `APP_API_KEY` in its browser bundle. Treat it as public; it is not a secret.
 
 Before starting Nginx, provision the TLS certificate for your real domain and mount it at the paths in `deploy/nginx.conf`.
 

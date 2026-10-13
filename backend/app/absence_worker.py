@@ -14,8 +14,5 @@ async def run():
             logger.exception('Attendance absence finalization failed')
         await asyncio.sleep(60)
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(run())
-    except KeyboardInterrupt:
-        print("\nAttendance worker stopped by user.")
+if __name__ == '__main__':
+    asyncio.run(run())
