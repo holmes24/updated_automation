@@ -1,0 +1,89 @@
+"""
+Checks whether the OCR'd selfie timestamp falls within the allowed
+check-in window. Per-employee shift_start/shift_end/shift_grace_minutes
+(set via PATCH /employees/{id}) override the global config.py defaults
+when present — most employees use the default, but a site with a
+different shift pattern can be set individually.
+
+Returns one of five statuses:
+  "on_time"        -> within grace_minutes of shift start (either side)
+  "late"           -> after the grace window, but still before shift end —
+                       NOT a failure, doesn't get flagged for admin review,
+                       just shows as "L" instead of "P" in the export
+  "before_window"  -> genuine failure (submitted implausibly early)
+  "after_window"   -> genuine failure (submitted after shift end)
+  "unparseable"    -> configured shift time couldn't be parsed — fails
+                       safe (treated as a failure, flagged for review)
+"""
+import logging
+from datetime import datetime, time
+
+from app.config import settings
+
+logger = logging.getLogger("shift_check")
+
+# Statuses that should NOT be added to a submission's issues list —
+# the employee did submit, it's just later than the grace window.
+# Shift timing is attendance classification, not fraud detection.
+# Therefore no shift status by itself should make a submission FLAGGED.
+NON_FAILURE_STATUSES = {
+    "on_time",
+    "late",
+    "before_window",
+    "after_window",
+    "unparseable",
+}
+
+
+def _parse_hhmm(value: str) -> time | None:
+    """Returns None (not a raised exception) if value isn't valid "HH:MM" —
+    a malformed stored value must not crash the whole background pipeline
+    (caught live: a roster record had a bad shift_start value)."""
+    try:
+        hour, minute = value.split(":")
+        return time(int(hour), int(minute))
+    except (ValueError, AttributeError):
+        logger.warning("Malformed shift time value, expected HH:MM: %r", value)
+        return None
+
+
+def check_shift_window(
+    submitted_at: datetime,
+    employee_shift_start: str | None = None,
+    employee_shift_end: str | None = None,
+    employee_grace_minutes: int | None = None,
+) -> tuple[str, str]:
+    """
+    Returns (status, reason) — status is one of the five values documented
+    above. Caller decides what to do with each (see NON_FAILURE_STATUSES).
+    """
+    start_str = employee_shift_start or settings.shift_window_start
+    end_str = employee_shift_end or settings.shift_window_end
+    grace = (
+        employee_grace_minutes
+        if employee_grace_minutes is not None
+        else settings.shift_grace_minutes
+    )
+
+    shift_start = _parse_hhmm(start_str)
+    shift_end = _parse_hhmm(end_str)
+
+    if shift_start is None or shift_end is None:
+        return "unparseable", f"Could not parse configured shift window (start={start_str!r}, end={end_str!r})"
+
+    # Compare employee shift clock time in India, never the server UTC clock.
+    from zoneinfo import ZoneInfo
+    if submitted_at.tzinfo is not None:
+        submitted_at = submitted_at.astimezone(ZoneInfo("Asia/Kolkata"))
+    submitted_time = submitted_at.time()
+    submitted_minutes = submitted_time.hour * 60 + submitted_time.minute
+    start_minutes = shift_start.hour * 60 + shift_start.minute
+    end_minutes = shift_end.hour * 60 + shift_end.minute
+
+    # At/before start: P; after start through grace: L; beyond grace: AL.
+    # A check-in after shift end is also AL, not present.
+    if submitted_minutes <= start_minutes:
+        return "on_time", "Check-in at or before shift start"
+    if submitted_minutes <= start_minutes + max(0, grace) and submitted_minutes <= end_minutes:
+        return "late", "Check-in within grace period"
+    return "after_grace", "Check-in after grace period (AL)"
