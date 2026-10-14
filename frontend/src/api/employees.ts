@@ -45,6 +45,10 @@ export async function updateEmployee(
   return data;
 }
 
+export async function deleteEmployee(employee_id: string) {
+  await apiClient.delete(`/employees/${employee_id}`);
+}
+
 export async function enrollFace(employee_id: string, photos: File[]) {
   const form = new FormData();
   form.append('employee_id', employee_id);

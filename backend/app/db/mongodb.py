@@ -248,6 +248,21 @@ async def update_coordinator(
     return Coordinator(**doc)
 
 
+async def delete_coordinator_if_unassigned(pc_id: str) -> int | None:
+    """Delete a coordinator only when no roster entries reference it.
+
+    Returns the number of linked supervisors, or None if the coordinator
+    does not exist.
+    """
+    db = get_db()
+    linked_supervisors = await db.roster.count_documents({"pc_id": pc_id})
+    if linked_supervisors:
+        return linked_supervisors
+
+    result = await db.coordinators.delete_one({"pc_id": pc_id})
+    return 0 if result.deleted_count == 1 else None
+
+
 async def get_next_employee_id() -> str:
     db = get_db()
     result = await db.counters.find_one_and_update(
@@ -328,6 +343,28 @@ async def update_employee_details(
     if doc is None:
         return None
     return RosterEntry(**doc)
+
+
+async def delete_employee_without_attendance(employee_id: str) -> int | None:
+    """Delete a supervisor only when no attendance submissions reference them.
+
+    Returns the number of attendance records, or None if the supervisor does
+    not exist.
+    """
+    db = get_db()
+    if await db.roster.find_one({"employee_id": employee_id}, {"_id": 1}) is None:
+        return None
+
+    attendance_count = await db.submissions.count_documents({"employee_id": employee_id})
+    if attendance_count:
+        return attendance_count
+
+    result = await db.roster.delete_one({"employee_id": employee_id})
+    if result.deleted_count != 1:
+        return None
+
+    await db.face_embeddings.delete_one({"employee_id": employee_id})
+    return 0
 
 
 async def save_enrollment(employee_id: str, embeddings: list[list[float]]) -> None:

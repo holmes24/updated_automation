@@ -29,8 +29,12 @@ your backend runs elsewhere locally.
   Present, reject -> Absent), log a manual entry (the deliberate backdoor for
   when the WhatsApp pipeline fails), trigger Excel export
 - **Field Supervisors (Employees)** — list/filter/search, pagination, create,
-  edit, enroll face (1-5 reference photos), activate/deactivate
-- **Coordinators (PCs)** — list/search, pagination, create, activate/deactivate
+  edit, enroll face (1-5 reference photos), activate/deactivate, and delete
+  only when no attendance history exists
+- **Coordinators (PCs)** — list/search, pagination, create, activate/deactivate,
+  and delete only when no field supervisors are assigned
+- **Activate/deactivate** — reversible status change that retains the record
+  and history; submissions from inactive supervisors are flagged for review
 - **Config-driven, not hardcoded** — thresholds (geofence radius, shift grace,
   etc.) are fetched once from `GET /config` on login via `ConfigContext`
   rather than baked into the UI as constants

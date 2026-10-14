@@ -41,6 +41,8 @@ from app.db.mongodb import (
     update_employee_details,
     create_manual_attendance,
     delete_attendance_submission,
+    delete_coordinator_if_unassigned,
+    delete_employee_without_attendance,
     register_webhook_event,
     mark_webhook_queued,
 )
@@ -271,6 +273,25 @@ async def patch_coordinator(
     return updated
 
 
+@app.delete("/coordinators/{pc_id}")
+async def delete_coordinator(
+    pc_id: str, admin: AdminUser = Depends(get_current_admin)
+):
+    """Permanently delete a coordinator only when no supervisors are assigned."""
+    linked_supervisors = await delete_coordinator_if_unassigned(pc_id)
+    if linked_supervisors is None:
+        raise HTTPException(status_code=404, detail=f"No coordinator found with pc_id: {pc_id}")
+    if linked_supervisors:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete coordinator {pc_id}: {linked_supervisors} field "
+                "supervisor(s) are assigned. Reassign or remove those supervisors first."
+            ),
+        )
+    return {"status": "deleted"}
+
+
 @app.get("/coordinators")
 async def get_coordinators(
     pc_id: str | None = None,
@@ -343,6 +364,27 @@ async def patch_employee(
             status_code=404, detail=f"No employee found with employee_id: {employee_id}"
         )
     return updated
+
+
+@app.delete("/employees/{employee_id}")
+async def delete_employee(
+    employee_id: str, admin: AdminUser = Depends(get_current_admin)
+):
+    """Permanently delete a supervisor only when they have no attendance history."""
+    attendance_count = await delete_employee_without_attendance(employee_id)
+    if attendance_count is None:
+        raise HTTPException(
+            status_code=404, detail=f"No employee found with employee_id: {employee_id}"
+        )
+    if attendance_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete supervisor {employee_id}: {attendance_count} "
+                "attendance record(s) exist. Deactivate the supervisor to preserve history."
+            ),
+        )
+    return {"status": "deleted"}
 
 
 @app.get("/employees")

@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { listCoordinators, updateCoordinator } from '../api/coordinators';
+import axios from 'axios';
+import { deleteCoordinator, listCoordinators, updateCoordinator } from '../api/coordinators';
 import type { Coordinator } from '../types';
 import { CoordinatorFormModal } from '../components/CoordinatorFormModal';
-import { UserX, UserCheck } from 'lucide-react';
+import { Trash2, UserX, UserCheck } from 'lucide-react';
 
 const PAGE_SIZE = 25;
 
@@ -13,13 +14,21 @@ export function CoordinatorsPage() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const data = await listCoordinators({ page, page_size: PAGE_SIZE, search: search || undefined });
-    setCoordinators(data.coordinators);
-    setTotal(data.total);
-    setLoading(false);
+    setError(null);
+    try {
+      const data = await listCoordinators({ page, page_size: PAGE_SIZE, search: search || undefined });
+      setCoordinators(data.coordinators);
+      setTotal(data.total);
+    } catch {
+      setError('Could not load coordinators.');
+    } finally {
+      setLoading(false);
+    }
   }, [page, search]);
 
   useEffect(() => {
@@ -33,6 +42,24 @@ export function CoordinatorsPage() {
   async function toggleActive(c: Coordinator) {
     await updateCoordinator(c.pc_id, { is_active: !c.is_active });
     await load();
+  }
+
+  async function removeCoordinator(coordinator: Coordinator) {
+    if (!window.confirm(`Permanently delete coordinator ${coordinator.name} (${coordinator.pc_id})? This is only allowed when no field supervisors are assigned.`)) {
+      return;
+    }
+
+    setDeletingId(coordinator.pc_id);
+    setError(null);
+    try {
+      await deleteCoordinator(coordinator.pc_id);
+      await load();
+    } catch (err) {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setError(typeof detail === 'string' ? detail : 'Could not delete coordinator. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -76,6 +103,12 @@ export function CoordinatorsPage() {
         />
       )}
 
+      {error && (
+        <p role="alert" className="mb-4 text-sm" style={{ color: 'var(--color-flagged)' }}>
+          {error}
+        </p>
+      )}
+
       <div className="rounded-lg border overflow-hidden shadow-sm" style={{ borderColor: 'var(--color-border)' }}>
         <table className="w-full text-sm">
           <thead>
@@ -117,6 +150,16 @@ export function CoordinatorsPage() {
                     title={c.is_active ? 'Deactivate' : 'Reactivate'}
                   >
                     {c.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
+                  </button>
+                  <button
+                    onClick={() => removeCoordinator(c)}
+                    disabled={deletingId === c.pc_id}
+                    className="p-1.5 rounded-md transition-colors hover:bg-black/5 disabled:opacity-40"
+                    style={{ color: 'var(--color-flagged)' }}
+                    title="Delete coordinator"
+                    aria-label={`Delete coordinator ${c.name}`}
+                  >
+                    <Trash2 size={16} />
                   </button>
                 </td>
               </tr>

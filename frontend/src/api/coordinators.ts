@@ -30,3 +30,7 @@ export async function updateCoordinator(
   const { data } = await apiClient.patch<Coordinator>(`/coordinators/${pc_id}`, payload);
   return data;
 }
+
+export async function deleteCoordinator(pc_id: string) {
+  await apiClient.delete(`/coordinators/${pc_id}`);
+}

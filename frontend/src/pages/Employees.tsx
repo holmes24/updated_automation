@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
-import { listEmployees, updateEmployee } from '../api/employees';
+import axios from 'axios';
+import { deleteEmployee, listEmployees, updateEmployee } from '../api/employees';
 import { listCoordinators } from '../api/coordinators';
 import type { Coordinator, Employee } from '../types';
 import { EmployeeFormModal } from '../components/EmployeeFormModal';
 import { EnrollFaceModal } from '../components/EnrollFaceModal';
-import { ScanFace, Pencil, UserX, UserCheck } from 'lucide-react';
+import { ScanFace, Pencil, Trash2, UserX, UserCheck } from 'lucide-react';
 
 const PAGE_SIZE = 25;
 
@@ -14,25 +15,33 @@ export function EmployeesPage() {
   const [page, setPage] = useState(1);
   const [coordinators, setCoordinators] = useState<Coordinator[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [pcFilter, setPcFilter] = useState('');
   const [showInactive, setShowInactive] = useState(false);
   const [search, setSearch] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<Employee | null | 'new'>(null);
   const [enrolling, setEnrolling] = useState<Employee | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const data = await listEmployees({
-      pc_id: pcFilter || undefined,
-      is_active: showInactive ? undefined : true,
-      search: search || undefined,
-      page,
-      page_size: PAGE_SIZE,
-    });
-    setEmployees(data.employees);
-    setTotal(data.total);
-    setLoading(false);
+    setError(null);
+    try {
+      const data = await listEmployees({
+        pc_id: pcFilter || undefined,
+        is_active: showInactive ? undefined : true,
+        search: search || undefined,
+        page,
+        page_size: PAGE_SIZE,
+      });
+      setEmployees(data.employees);
+      setTotal(data.total);
+    } catch {
+      setError('Could not load field supervisors.');
+    } finally {
+      setLoading(false);
+    }
   }, [pcFilter, showInactive, search, page]);
 
   useEffect(() => {
@@ -50,6 +59,24 @@ export function EmployeesPage() {
   async function toggleActive(emp: Employee) {
     await updateEmployee(emp.employee_id, { is_active: !emp.is_active });
     await load();
+  }
+
+  async function removeEmployee(employee: Employee) {
+    if (!window.confirm(`Permanently delete supervisor ${employee.name} (${employee.employee_id})? This is only allowed when no attendance records exist.`)) {
+      return;
+    }
+
+    setDeletingId(employee.employee_id);
+    setError(null);
+    try {
+      await deleteEmployee(employee.employee_id);
+      await load();
+    } catch (err) {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setError(typeof detail === 'string' ? detail : 'Could not delete supervisor. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -103,6 +130,12 @@ export function EmployeesPage() {
           }}
         />
       </div>
+
+      {error && (
+        <p role="alert" className="mb-4 text-sm" style={{ color: 'var(--color-flagged)' }}>
+          {error}
+        </p>
+      )}
 
       <div className="rounded-lg border overflow-hidden shadow-sm" style={{ borderColor: 'var(--color-border)' }}>
         <table className="w-full text-sm">
@@ -168,6 +201,16 @@ export function EmployeesPage() {
                       title={emp.is_active ? 'Deactivate' : 'Reactivate'}
                     >
                       {emp.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
+                    </button>
+                    <button
+                      onClick={() => removeEmployee(emp)}
+                      disabled={deletingId === emp.employee_id}
+                      className="p-1.5 rounded-md transition-colors hover:bg-black/5 disabled:opacity-40"
+                      style={{ color: 'var(--color-flagged)' }}
+                      title="Delete supervisor"
+                      aria-label={`Delete supervisor ${emp.name}`}
+                    >
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </td>
