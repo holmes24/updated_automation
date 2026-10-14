@@ -72,6 +72,8 @@ Each image submission is independently analyzed, even if another submission alre
 - possible date/time-edit signal when a near-identical previous image has conflicting overlay dates
 - face presence/count and enrolled-identity verification
 - assigned-site geofence
+- per-person assigned-site radius, configurable in kilometers (5 km default)
+- unique WhatsApp phone numbers for unambiguous attendance matching
 - passive image-quality/liveness risk signals
 - human-readable fraud flags
 

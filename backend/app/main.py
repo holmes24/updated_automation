@@ -571,21 +571,49 @@ async def get_attendance(
         record["attendance_code"] = marker_for_submission(record)
         if record.get("entry_type") == "system" and record.get("attendance_status") == "absent":
             record["attendance_code"] = "A"
-        if record.get("verdict") == "verified" and record["check_in_at_ist"] is None:
+        if (
+            record.get("entry_type") == "whatsapp"
+            and record.get("verdict") == "verified"
+            and record["check_in_at_ist"] is None
+        ):
             record["attendance_code"] = "F"
         record["review_display"] = (
+            "System absent (no image received)"
+            if record.get("entry_type") == "system" and record.get("attendance_status") == "absent" else
             "Approved" if record.get("review_status") == "approved" else
             "Rejected" if record.get("review_status") == "rejected" else
             "Pending review" if record.get("verdict") == "flagged" else
             "Automatically verified" if record.get("verdict") == "verified" else
             "Not applicable"
         )
+        radius = record.get("geofence_radius_meters")
+        radius_display = (
+            f"{radius / 1000:.2f}".rstrip("0").rstrip(".") + " km"
+            if isinstance(radius, (int, float)) else None
+        )
         if record.get("geofence_passed") is True:
             distance = record.get("geofence_distance_m")
-            record["geofence_display"] = f"Within range ({distance:.0f} m)" if isinstance(distance, (int, float)) else "Within range"
+            distance_display = (
+                f"{distance:.0f} m" if distance < 1000
+                else f"{distance / 1000:.2f} km"
+            ) if isinstance(distance, (int, float)) else None
+            record["geofence_display"] = (
+                f"Within range ({distance_display}; limit {radius_display})"
+                if distance_display and radius_display else
+                f"Within range ({distance_display})" if distance_display else "Within range"
+            )
         elif record.get("geofence_passed") is False:
             distance = record.get("geofence_distance_m")
-            record["geofence_display"] = f"Outside range ({distance:.0f} m)" if isinstance(distance, (int, float)) else "Outside range (distance unavailable)"
+            distance_display = (
+                f"{distance:.0f} m" if distance < 1000
+                else f"{distance / 1000:.2f} km"
+            ) if isinstance(distance, (int, float)) else None
+            record["geofence_display"] = (
+                f"Outside range ({distance_display}; limit {radius_display})"
+                if distance_display and radius_display else
+                f"Outside range ({distance_display})" if distance_display
+                else "Outside range (distance unavailable)"
+            )
         else:
             record["geofence_display"] = "Not verified (GPS/site missing)"
     return {

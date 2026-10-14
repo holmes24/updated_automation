@@ -38,6 +38,7 @@ export function EmployeeFormModal({
     area: employee?.area ?? undefined,
     designation: employee?.designation ?? undefined,
     assigned_site: employee?.assigned_site ?? undefined,
+    geofence_radius_km: employee?.geofence_radius_km ?? 5,
     shift_start: employee?.shift_start ?? undefined,
     shift_end: employee?.shift_end ?? undefined,
     shift_grace_minutes: employee?.shift_grace_minutes ?? undefined,
@@ -173,6 +174,9 @@ export function EmployeeFormModal({
                 Enter all 10 digits.
               </p>
             )}
+            <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)' }}>
+              Use a unique WhatsApp number for each participant so image attendance maps to the right person.
+            </p>
             {employee && (
               <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)' }}>
                 Changing this re-points which WhatsApp number is matched to {employee.employee_id}.
@@ -267,6 +271,20 @@ export function EmployeeFormModal({
               style={inputStyle}
             />
           </Field>
+          <Field label="Allowed distance from attendance site (km)">
+            <input
+              type="number"
+              min="0.1"
+              step="0.1"
+              value={form.geofence_radius_km ?? 5}
+              onChange={(e) => set('geofence_radius_km', Number(e.target.value))}
+              className="w-full px-3 py-2 rounded-md text-sm border"
+              style={inputStyle}
+            />
+            <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+              Default: 5 km. A site and GPS location in the submitted image are required.
+            </p>
+          </Field>
         </div>
 
         <div className="mb-4"><AssignedSiteMap site={site} onChange={setSite} /></div>
@@ -283,7 +301,7 @@ export function EmployeeFormModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || !form.name.trim() || !phoneValid || !hierarchyValid}
+            disabled={saving || !form.name.trim() || !phoneValid || !hierarchyValid || !Number.isFinite(form.geofence_radius_km) || (form.geofence_radius_km ?? 0) <= 0}
             className="px-3 py-1.5 rounded-md text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'white' }}
           >

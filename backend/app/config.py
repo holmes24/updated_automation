@@ -58,7 +58,7 @@ class Settings(BaseSettings):
         0.50  # between this and pass => flag for review
     )
     geofence_radius_meters: float = (
-        200.0  # OCR'd location must be within this of assigned site
+        5000.0  # default per-person radius when no custom value is configured
     )
     shift_window_start: str = (
         "09:00"  # confirmed policy default (with per-employee override)

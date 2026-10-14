@@ -162,6 +162,7 @@ export function CoordinatorsPage() {
                       area: null,
                       designation: 'Project Co-Ordinator',
                       assigned_site: c.assigned_site,
+                      geofence_radius_km: c.geofence_radius_km,
                       shift_start: c.shift_start,
                       shift_end: c.shift_end,
                       shift_grace_minutes: c.shift_grace_minutes,

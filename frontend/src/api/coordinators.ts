@@ -3,6 +3,7 @@ import type { AssignedSite, Coordinator, PageMeta } from '../types';
 
 export type CoordinatorAttendanceSettings = {
   assigned_site?: AssignedSite | null;
+  geofence_radius_km?: number;
   shift_start?: string | null;
   shift_end?: string | null;
   shift_grace_minutes?: number | null;

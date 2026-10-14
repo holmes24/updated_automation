@@ -15,6 +15,7 @@ from app.db.mongodb import (
     has_submission_today,
     lookup_roster,
     normalize_phone,
+    delete_system_absences_today,
 )
 from app.redis_queue import NOTIFICATION_STREAM, enqueue, get_redis
 from app.schemas import InteraktWebhookPayload
@@ -119,6 +120,10 @@ async def process_attendance_submission(
     existing = await db.submissions.find_one({"event_id": event_id})
     if existing:
         existing["_id"] = str(existing["_id"])
+        if existing.get("employee_id") and existing.get("attendance_date"):
+            await delete_system_absences_today(
+                existing["employee_id"], existing["attendance_date"]
+            )
         await queue_submission_notifications(event_id, payload, existing)
         return
 
@@ -163,7 +168,9 @@ async def process_attendance_submission(
         return
 
     # Enforce exactly one submission attempt per day
-    if roster_entry is not None and await has_submission_today(roster_entry.employee_id, today_ist):
+    if roster_entry is not None and await has_submission_today(
+        roster_entry.employee_id, today_ist, include_system_absences=False
+    ):
         warning_job = {
             "notification_id": _notification_id(event_id, "employee_duplicate_day"),
             "event_id": event_id,
@@ -216,10 +223,13 @@ async def process_attendance_submission(
 
     geofence_passed = None
     geofence_distance = None
+    geofence_radius_meters = None
     if roster_entry and roster_entry.assigned_site and overlay.latitude is not None and overlay.longitude is not None:
+        geofence_radius_meters = roster_entry.geofence_radius_km * 1000
         geofence_passed, geofence_distance = check_geofence(
             overlay.latitude, overlay.longitude,
             roster_entry.assigned_site.lat, roster_entry.assigned_site.long,
+            radius_meters=geofence_radius_meters,
         )
         if not geofence_passed:
             issues.append(f"geofence_fail_{geofence_distance:.0f}m")
@@ -295,6 +305,7 @@ async def process_attendance_submission(
         "site_name": roster_entry.assigned_site.name if roster_entry and roster_entry.assigned_site else None,
         "geofence_passed": geofence_passed,
         "geofence_distance_m": geofence_distance,
+        "geofence_radius_meters": geofence_radius_meters,
         "face_present": face_present,
         "face_count": face_count,
         "liveness_status": liveness_status,
@@ -323,6 +334,8 @@ async def process_attendance_submission(
         submission = await db.submissions.find_one({"event_id": event_id})
         if not submission:
             raise
+    if roster_entry is not None:
+        await delete_system_absences_today(roster_entry.employee_id, today_ist)
 
     if submission.get("_id") is not None:
         submission["_id"] = str(submission["_id"])

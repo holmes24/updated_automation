@@ -31,6 +31,7 @@ export interface CreateEmployeePayload {
   area?: string;
   designation?: string;
   assigned_site?: { name: string; lat: number; long: number } | null;
+  geofence_radius_km?: number;
   shift_start?: string | null;
   shift_end?: string | null;
   shift_grace_minutes?: number | null;

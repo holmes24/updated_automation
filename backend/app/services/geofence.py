@@ -33,11 +33,13 @@ def check_geofence(
     selfie_lon: float,
     site_lat: float,
     site_lon: float,
+    radius_meters: float | None = None,
 ) -> tuple[bool, float]:
     """
     Returns (passed, distance_in_meters).
-    Radius threshold comes from config (tunable, see app/config.py).
+    Uses the person's configured radius, or the application default when omitted.
     """
     distance = haversine_distance_meters(selfie_lat, selfie_lon, site_lat, site_lon)
-    passed = distance <= settings.geofence_radius_meters
+    allowed_radius = radius_meters if radius_meters is not None else settings.geofence_radius_meters
+    passed = distance <= allowed_radius
     return passed, distance

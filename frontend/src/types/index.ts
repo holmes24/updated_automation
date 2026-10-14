@@ -5,6 +5,7 @@ export interface Coordinator {
   is_active: boolean;
   deactivated_at: string | null;
   assigned_site: AssignedSite | null;
+  geofence_radius_km: number;
   shift_start: string | null;
   shift_end: string | null;
   shift_grace_minutes: number | null;
@@ -35,6 +36,7 @@ export interface Employee {
   area: string | null;
   designation: string | null;
   assigned_site: AssignedSite | null;
+  geofence_radius_km: number;
   shift_start: string | null;
   shift_end: string | null;
   shift_grace_minutes: number | null;
@@ -87,6 +89,7 @@ export interface AttendanceRecord {
   overlay: Record<string, unknown> | null;
   geofence_passed: boolean | null;
   geofence_distance_m: number | null;
+  geofence_radius_meters?: number | null;
   face_present: boolean | null;
   face_count: number | null;
   identity_verdict: string | null;

@@ -60,6 +60,7 @@ class Coordinator(BaseModel):
     is_active: bool = True
     deactivated_at: str | None = None
     assigned_site: AssignedSite | None = None
+    geofence_radius_km: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     shift_start: str | None = None
     shift_end: str | None = None
     shift_grace_minutes: int | None = None
@@ -70,6 +71,7 @@ class CoordinatorRegistrationRequest(BaseModel):
     name: str
     phone_number: str | None = None
     assigned_site: AssignedSite | None = None
+    geofence_radius_km: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     shift_start: str | None = None
     shift_end: str | None = None
     shift_grace_minutes: int | None = None
@@ -80,6 +82,7 @@ class CoordinatorUpdateRequest(BaseModel):
     phone_number: str | None = None
     is_active: bool | None = None
     assigned_site: AssignedSite | None = None
+    geofence_radius_km: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     shift_start: str | None = None
     shift_end: str | None = None
     shift_grace_minutes: int | None = None
@@ -97,6 +100,7 @@ class RosterEntry(BaseModel):
     area: str | None = None
     designation: str | None = None
     assigned_site: AssignedSite | None = None
+    geofence_radius_km: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     shift_start: str | None = None
     shift_end: str | None = None
     shift_grace_minutes: int | None = None
@@ -111,6 +115,7 @@ class EmployeeRegistrationRequest(BaseModel):
     area: str | None = None
     designation: str | None = None
     assigned_site: AssignedSite | None = None
+    geofence_radius_km: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     shift_start: str | None = None
     shift_end: str | None = None
     shift_grace_minutes: int | None = None
@@ -124,6 +129,7 @@ class EmployeeUpdateRequest(BaseModel):
     area: Optional[str] = None
     designation: Optional[str] = None
     assigned_site: Optional[AssignedSite] = None
+    geofence_radius_km: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     shift_start: Optional[str] = None
     shift_end: Optional[str] = None
     shift_grace_minutes: Optional[int] = None
@@ -140,6 +146,35 @@ def normalize_phone(value: str | None) -> str:
     if len(digits) == 12 and digits.startswith("91"):
         return digits
     return digits
+
+
+def _phone_number_variants(value: str) -> list[str]:
+    normalized = normalize_phone(value)
+    variants = [normalized, "+" + normalized]
+    if normalized.startswith("91") and len(normalized) == 12:
+        variants.extend([normalized[2:], "0" + normalized[2:]])
+    return variants
+
+
+async def _phone_number_is_registered(
+    phone_number: str,
+    *,
+    exclude_employee_id: str | None = None,
+    exclude_pc_id: str | None = None,
+) -> bool:
+    variants = _phone_number_variants(phone_number)
+    db = get_db()
+
+    roster_query = {"phone_number": {"$in": variants}}
+    if exclude_employee_id is not None:
+        roster_query["employee_id"] = {"$ne": exclude_employee_id}
+    if await db.roster.find_one(roster_query, {"_id": 1}):
+        return True
+
+    coordinator_query = {"phone_number": {"$in": variants}}
+    if exclude_pc_id is not None:
+        coordinator_query["pc_id"] = {"$ne": exclude_pc_id}
+    return await db.coordinators.find_one(coordinator_query, {"_id": 1}) is not None
 
 
 async def lookup_roster(phone_number: str) -> RosterEntry | None:
@@ -164,6 +199,7 @@ async def lookup_roster(phone_number: str) -> RosterEntry | None:
                 role="PC",
                 pc_id=doc["pc_id"],
                 assigned_site=doc.get("assigned_site"),
+                geofence_radius_km=doc.get("geofence_radius_km", 5.0),
                 shift_start=doc.get("shift_start"),
                 shift_end=doc.get("shift_end"),
                 shift_grace_minutes=doc.get("shift_grace_minutes"),
@@ -189,6 +225,7 @@ async def get_roster_by_employee_id(employee_id: str) -> RosterEntry | None:
             role="PC",
             pc_id=pc["pc_id"],
             assigned_site=pc.get("assigned_site"),
+            geofence_radius_km=pc.get("geofence_radius_km", 5.0),
             shift_start=pc.get("shift_start"),
             shift_end=pc.get("shift_end"),
             shift_grace_minutes=pc.get("shift_grace_minutes"),
@@ -230,8 +267,8 @@ async def get_next_pc_id() -> str:
 
 async def register_coordinator(request: CoordinatorRegistrationRequest) -> Coordinator:
     db = get_db()
-    if request.phone_number and await db.roster.find_one({"phone_number": request.phone_number}):
-        raise ValueError(f"phone_number {request.phone_number} is already registered")
+    if request.phone_number and await _phone_number_is_registered(request.phone_number):
+        raise ValueError("phone_number is already registered to another attendance participant")
     pc_id = await get_next_pc_id()
     doc = {
         "pc_id": pc_id,
@@ -239,6 +276,7 @@ async def register_coordinator(request: CoordinatorRegistrationRequest) -> Coord
         "phone_number": request.phone_number,
         "is_active": True,
         "assigned_site": request.assigned_site.model_dump() if request.assigned_site else None,
+        "geofence_radius_km": request.geofence_radius_km,
         "shift_start": request.shift_start,
         "shift_end": request.shift_end,
         "shift_grace_minutes": request.shift_grace_minutes,
@@ -289,8 +327,19 @@ async def update_coordinator(
     if isinstance(set_fields.get("assigned_site"), AssignedSite):
         set_fields["assigned_site"] = set_fields["assigned_site"].model_dump()
 
+    current = await get_coordinator_by_id(pc_id) if "phone_number" in set_fields else None
+    if (
+        current is not None
+        and set_fields["phone_number"]
+        and normalize_phone(set_fields["phone_number"]) != normalize_phone(current.phone_number)
+        and await _phone_number_is_registered(
+            set_fields["phone_number"], exclude_pc_id=pc_id
+        )
+    ):
+        raise ValueError("phone_number is already registered to another attendance participant")
+
     if "is_active" in set_fields:
-        current = await get_coordinator_by_id(pc_id)
+        current = current or await get_coordinator_by_id(pc_id)
         if current is not None and current.is_active != set_fields["is_active"]:
             if set_fields["is_active"] is False:
                 set_fields["deactivated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -373,8 +422,8 @@ async def register_employee(request: EmployeeRegistrationRequest) -> RosterEntry
     )
 
     db = get_db()
-    if await db.coordinators.find_one({"phone_number": request.phone_number}, {"_id": 1}):
-        raise ValueError(f"phone_number {request.phone_number} is already registered")
+    if await _phone_number_is_registered(request.phone_number):
+        raise ValueError("phone_number is already registered to another attendance participant")
     employee_id = await get_next_employee_id()
     doc = {
         "employee_id": employee_id,
@@ -387,6 +436,7 @@ async def register_employee(request: EmployeeRegistrationRequest) -> RosterEntry
         "area": request.area,
         "designation": request.designation,
         "assigned_site": request.assigned_site.model_dump() if request.assigned_site else None,
+        "geofence_radius_km": request.geofence_radius_km,
         "shift_start": request.shift_start,
         "shift_end": request.shift_end,
         "shift_grace_minutes": request.shift_grace_minutes,
@@ -411,6 +461,14 @@ async def update_employee_details(
         k: (v.model_dump() if isinstance(v, AssignedSite) else v)
         for k, v in updates.model_dump(exclude_unset=True).items()
     }
+    if (
+        set_fields.get("phone_number")
+        and normalize_phone(set_fields["phone_number"]) != normalize_phone(current.phone_number)
+        and await _phone_number_is_registered(
+            set_fields["phone_number"], exclude_employee_id=employee_id
+        )
+    ):
+        raise ValueError("phone_number is already registered to another attendance participant")
     role = set_fields.get("role", current.role)
     pc_id = set_fields.get("pc_id", current.pc_id)
     parent_employee_id = set_fields.get(
@@ -539,6 +597,7 @@ async def list_attendance_people(
                 role="PC",
                 pc_id=pc.pc_id,
                 assigned_site=pc.assigned_site,
+                geofence_radius_km=pc.geofence_radius_km,
                 shift_start=pc.shift_start,
                 shift_end=pc.shift_end,
                 shift_grace_minutes=pc.shift_grace_minutes,
@@ -685,29 +744,44 @@ async def delete_attendance_submission(submission_id: str) -> bool:
     return result.deleted_count == 1
 
 
-async def has_submission_today(employee_id: str, date_str: str) -> bool:
-    """Checks whether this employee already has ANY submission for the date."""
+async def has_submission_today(
+    employee_id: str, date_str: str, *, include_system_absences: bool = True
+) -> bool:
+    """Checks whether this employee already has an attendance record for the date."""
     norm_date = normalize_date_str(date_str)
     parts = norm_date.split("-")
     alt_date = f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else norm_date
 
     db = get_db()
-    existing = await db.submissions.find_one(
-        {
-            "employee_id": employee_id,
-            "$or": [
-                {"attendance_date": norm_date},
-                {"received_at_utc": {"$regex": f"^{norm_date}"}},
-                {"received_at_utc": {"$regex": f"^{alt_date}"}},
-            ],
-        }
-    )
+    query = {
+        "employee_id": employee_id,
+        "$or": [
+            {"attendance_date": norm_date},
+            {"received_at_utc": {"$regex": f"^{norm_date}"}},
+            {"received_at_utc": {"$regex": f"^{alt_date}"}},
+        ],
+    }
+    if not include_system_absences:
+        query["$nor"] = [
+            {"entry_type": "system", "attendance_status": "absent"}
+        ]
+    existing = await db.submissions.find_one(query)
     if existing is not None:
         return True
     return await db.attendance_overrides.find_one(
         {"employee_id": employee_id, "attendance_date": norm_date},
         {"_id": 1},
     ) is not None
+
+
+async def delete_system_absences_today(employee_id: str, date_str: str) -> None:
+    """Remove an auto-absence if a real attendance record arrives later that day."""
+    await get_db().submissions.delete_many({
+        "employee_id": employee_id,
+        "attendance_date": normalize_date_str(date_str),
+        "entry_type": "system",
+        "attendance_status": "absent",
+    })
 
 
 async def resolve_flagged_submission(
@@ -830,7 +904,9 @@ async def create_manual_attendance(
         raise ValueError(f"No employee found with employee_id: {employee_id}")
 
     norm_date = normalize_date_str(date)
-    if await has_submission_today(employee_id, norm_date):
+    if await has_submission_today(
+        employee_id, norm_date, include_system_absences=False
+    ):
         raise ValueError(
             f"A submission already exists for {employee_id} on {norm_date} — "
             f"use PATCH /attendance/{{id}}/resolve on the existing record instead"
@@ -866,6 +942,7 @@ async def create_manual_attendance(
         "received_at_utc": f"{norm_date}T00:00:00Z",
     }
     result = await db.submissions.insert_one(doc)
+    await delete_system_absences_today(employee_id, norm_date)
     doc["_id"] = str(result.inserted_id)
     return doc
 

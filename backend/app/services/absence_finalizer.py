@@ -3,7 +3,12 @@ Run this from one backend scheduler only to avoid duplicate inserts across repli
 """
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from app.db.mongodb import get_db, has_submission_today, list_attendance_people
+from app.db.mongodb import (
+    delete_system_absences_today,
+    get_db,
+    has_submission_today,
+    list_attendance_people,
+)
 from app.config import settings
 
 IST = ZoneInfo('Asia/Kolkata')
@@ -36,3 +41,7 @@ async def finalize_absences():
             'received_at_utc': datetime.now(timezone.utc).isoformat(),
             'reason': 'No check-in received by shift end',
         })
+        if await has_submission_today(
+            person.employee_id, today, include_system_absences=False
+        ):
+            await delete_system_absences_today(person.employee_id, today)
