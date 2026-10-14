@@ -14,6 +14,7 @@ export function EmployeesPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [coordinators, setCoordinators] = useState<Coordinator[]>([]);
+  const [fieldSupervisors, setFieldSupervisors] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pcFilter, setPcFilter] = useState('');
@@ -38,7 +39,7 @@ export function EmployeesPage() {
       setEmployees(data.employees);
       setTotal(data.total);
     } catch {
-      setError('Could not load field supervisors.');
+      setError('Could not load attendance participants.');
     } finally {
       setLoading(false);
     }
@@ -53,7 +54,10 @@ export function EmployeesPage() {
   }, [pcFilter, showInactive, search]);
 
   useEffect(() => {
-    listCoordinators().then((r) => setCoordinators(r.coordinators));
+    listCoordinators({ page_size: 500 }).then((r) => setCoordinators(r.coordinators));
+    listEmployees({ role: 'FS', page_size: 500 })
+      .then((r) => setFieldSupervisors(r.employees))
+      .catch(() => setError('Could not load field supervisor reporting options.'));
   }, []);
 
   async function toggleActive(emp: Employee) {
@@ -62,7 +66,7 @@ export function EmployeesPage() {
   }
 
   async function removeEmployee(employee: Employee) {
-    if (!window.confirm(`Permanently delete supervisor ${employee.name} (${employee.employee_id})? This is only allowed when no attendance records exist.`)) {
+    if (!window.confirm(`Permanently delete ${employee.name} (${employee.employee_id})? This is only allowed when there is no attendance history or child assignment.`)) {
       return;
     }
 
@@ -73,7 +77,7 @@ export function EmployeesPage() {
       await load();
     } catch (err) {
       const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
-      setError(typeof detail === 'string' ? detail : 'Could not delete supervisor. Please try again.');
+      setError(typeof detail === 'string' ? detail : 'Could not delete participant. Please try again.');
     } finally {
       setDeletingId(null);
     }
@@ -84,15 +88,20 @@ export function EmployeesPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-medium" style={{ color: 'var(--color-ink)' }}>
-          Field Supervisors
-        </h1>
+        <div>
+          <h1 className="text-lg font-medium" style={{ color: 'var(--color-ink)' }}>
+            Attendance Participants
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--color-ink-muted)' }}>
+            Set each person’s department and reporting line. Older records without a saved department default to FS.
+          </p>
+        </div>
         <button
           onClick={() => setEditing('new')}
           className="px-3 py-1.5 rounded-md text-sm font-medium"
           style={{ background: 'var(--color-accent)', color: 'white' }}
         >
-          Add supervisor
+          Add participant
         </button>
       </div>
 
@@ -141,7 +150,7 @@ export function EmployeesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: 'var(--color-surface-sunken)' }}>
-              {['ID', 'Name', 'Coordinator', 'Area', 'Designation', 'Status', 'Action'].map((h) => (
+              {['ID', 'Name', 'Department', 'Coordinator', 'Reports To', 'Area', 'Designation', 'Status', 'Action'].map((h) => (
                 <th
                   key={h}
                   className={`px-4 py-2.5 text-xs font-medium ${h === 'Action' ? 'text-right' : 'text-left'}`}
@@ -162,7 +171,17 @@ export function EmployeesPage() {
                   {emp.name}
                 </td>
                 <td className="px-4 py-2.5" style={{ color: 'var(--color-ink-muted)' }}>
+                  {emp.role}
+                </td>
+                <td className="px-4 py-2.5" style={{ color: 'var(--color-ink-muted)' }}>
                   {coordinators.find((c) => c.pc_id === emp.pc_id)?.name ?? '—'}
+                </td>
+                <td className="px-4 py-2.5" style={{ color: 'var(--color-ink-muted)' }}>
+                  {emp.role === 'LS'
+                    ? fieldSupervisors.find((supervisor) => supervisor.employee_id === emp.parent_employee_id)?.name ?? emp.parent_employee_id
+                    : emp.role === 'FS' || emp.role === 'LSS'
+                      ? coordinators.find((coordinator) => coordinator.pc_id === emp.pc_id)?.name ?? '—'
+                      : '—'}
                 </td>
                 <td className="px-4 py-2.5" style={{ color: 'var(--color-ink-muted)' }}>
                   {emp.area ?? '—'}
@@ -207,8 +226,8 @@ export function EmployeesPage() {
                       disabled={deletingId === emp.employee_id}
                       className="p-1.5 rounded-md transition-colors hover:bg-black/5 disabled:opacity-40"
                       style={{ color: 'var(--color-flagged)' }}
-                      title="Delete supervisor"
-                      aria-label={`Delete supervisor ${emp.name}`}
+                      title="Delete participant"
+                      aria-label={`Delete participant ${emp.name}`}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -218,8 +237,8 @@ export function EmployeesPage() {
             ))}
             {!loading && employees.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
-                  No supervisors match these filters.
+                <td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
+                  No attendance participants match these filters.
                 </td>
               </tr>
             )}
@@ -260,6 +279,7 @@ export function EmployeesPage() {
         <EmployeeFormModal
           employee={editing === 'new' ? null : editing}
           coordinators={coordinators}
+          fieldSupervisors={fieldSupervisors}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);

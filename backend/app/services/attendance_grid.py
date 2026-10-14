@@ -5,7 +5,12 @@ Markers:
     P   = Present and on time
     L   = Present but late
     A   = Absent
+    AL  = Absent or checked in after the allowed shift window
+    HD  = Half day
+    WO  = Week off
+    H   = Holiday
     F   = Flagged, awaiting review
+        Admin changes override this daily marker without replacing submission history.
     M   = Manual attendance entry
     N/A = Employee inactive on that date
     —   = Today/future date with no submission yet
@@ -39,6 +44,9 @@ def marker_for_submission(sub: dict | None) -> str:
     """Convert one MongoDB submission into a daily attendance marker."""
     if not sub:
         return "A"
+
+    if sub.get("attendance_code"):
+        return sub["attendance_code"]
 
     if sub.get("verdict") == "inactive_account":
         return "N/A"

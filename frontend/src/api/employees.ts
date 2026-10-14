@@ -1,10 +1,12 @@
 import { apiClient } from './client';
-import type { Employee, PageMeta } from '../types';
+import type { AttendanceRole, Employee, PageMeta } from '../types';
 
 export interface EmployeeListParams {
   pc_id?: string;
   area?: string;
   designation?: string;
+  role?: Exclude<AttendanceRole, 'PC'>;
+  parent_employee_id?: string;
   is_active?: boolean;
   page?: number;
   page_size?: number;
@@ -23,13 +25,15 @@ export async function listEmployees(params?: EmployeeListParams) {
 export interface CreateEmployeePayload {
   phone_number: string;
   name: string;
+  role: Exclude<AttendanceRole, 'PC'>;
   pc_id?: string;
+  parent_employee_id?: string;
   area?: string;
   designation?: string;
-  assigned_site?: { name: string; lat: number; long: number };
-  shift_start?: string;
-  shift_end?: string;
-  shift_grace_minutes?: number;
+  assigned_site?: { name: string; lat: number; long: number } | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
+  shift_grace_minutes?: number | null;
 }
 
 export async function createEmployee(payload: CreateEmployeePayload) {

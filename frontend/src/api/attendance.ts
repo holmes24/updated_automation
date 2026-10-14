@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { apiClient } from './client';
-import type { AttendanceRecord, PageMeta, Verdict } from '../types';
+import type { AttendanceGrid, AttendanceRole, AttendanceRecord, PageMeta, Verdict } from '../types';
 
 export interface AttendanceListParams {
   employee_id?: string;
@@ -36,6 +36,34 @@ export async function resolveAttendance(
 
 export async function deleteAttendance(submission_id: string) {
   await apiClient.delete(`/attendance/${submission_id}`);
+}
+
+export async function getAttendanceGrid(params: {
+  month: number;
+  year: number;
+  role?: AttendanceRole;
+  pc_id?: string;
+}) {
+  const { data } = await apiClient.get<AttendanceGrid>('/attendance/grid', { params });
+  return data;
+}
+
+export async function searchAttendancePeople(search: string, page_size = 20) {
+  const { data } = await apiClient.get<{ people: import('../types').Employee[]; total: number }>(
+    '/attendance/people',
+    { params: { search, page_size } }
+  );
+  return data;
+}
+
+export async function overrideAttendanceCell(payload: {
+  employee_id: string;
+  date: string;
+  attendance_code: string;
+  reason: string;
+}) {
+  const { data } = await apiClient.patch('/attendance/override', payload);
+  return data;
 }
 
 // --- Manual entry ---------------------------------------------------------

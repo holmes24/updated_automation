@@ -5,13 +5,14 @@ MongoDB connection (async, via Motor) and roster lookup.
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
 from app.config import settings
+from app.services.attendance_grid import marker_for_submission
 
 logger = logging.getLogger("db")
 
@@ -58,17 +59,30 @@ class Coordinator(BaseModel):
     phone_number: str | None = None
     is_active: bool = True
     deactivated_at: str | None = None
+    assigned_site: AssignedSite | None = None
+    shift_start: str | None = None
+    shift_end: str | None = None
+    shift_grace_minutes: int | None = None
+    role: Literal["PC"] = "PC"
 
 
 class CoordinatorRegistrationRequest(BaseModel):
     name: str
     phone_number: str | None = None
+    assigned_site: AssignedSite | None = None
+    shift_start: str | None = None
+    shift_end: str | None = None
+    shift_grace_minutes: int | None = None
 
 
 class CoordinatorUpdateRequest(BaseModel):
     name: str | None = None
     phone_number: str | None = None
     is_active: bool | None = None
+    assigned_site: AssignedSite | None = None
+    shift_start: str | None = None
+    shift_end: str | None = None
+    shift_grace_minutes: int | None = None
 
 
 class RosterEntry(BaseModel):
@@ -77,7 +91,9 @@ class RosterEntry(BaseModel):
     name: str
     is_active: bool = True
     deactivated_at: str | None = None
+    role: Literal["PC", "FS", "LS", "LSS"] = "FS"
     pc_id: str | None = None
+    parent_employee_id: str | None = None
     area: str | None = None
     designation: str | None = None
     assigned_site: AssignedSite | None = None
@@ -89,7 +105,9 @@ class RosterEntry(BaseModel):
 class EmployeeRegistrationRequest(BaseModel):
     phone_number: str
     name: str
+    role: Literal["FS", "LS", "LSS"] = "FS"
     pc_id: str | None = None
+    parent_employee_id: str | None = None
     area: str | None = None
     designation: str | None = None
     assigned_site: AssignedSite | None = None
@@ -100,7 +118,9 @@ class EmployeeRegistrationRequest(BaseModel):
 
 class EmployeeUpdateRequest(BaseModel):
     phone_number: Optional[str] = None
+    role: Optional[Literal["FS", "LS", "LSS"]] = None
     pc_id: Optional[str] = None
+    parent_employee_id: Optional[str] = None
     area: Optional[str] = None
     designation: Optional[str] = None
     assigned_site: Optional[AssignedSite] = None
@@ -125,14 +145,29 @@ def normalize_phone(value: str | None) -> str:
 async def lookup_roster(phone_number: str) -> RosterEntry | None:
     db = get_db()
     normalized = normalize_phone(phone_number)
+    variants = [normalized, "+" + normalized]
+    if normalized.startswith("91") and len(normalized) == 12:
+        variants.extend([normalized[2:], "0" + normalized[2:]])
     doc = await db.roster.find_one({"phone_number": normalized})
     if doc is None:
         # Backward compatibility with previously stored +91 / local numbers.
-        variants = [normalized, "+" + normalized]
-        if normalized.startswith("91") and len(normalized) == 12:
-            variants.extend([normalized[2:], "0" + normalized[2:]])
         doc = await db.roster.find_one({"phone_number": {"$in": variants}})
     if doc is None:
+        doc = await db.coordinators.find_one({"phone_number": {"$in": variants}})
+        if doc is not None:
+            return RosterEntry(
+                employee_id=doc["pc_id"],
+                phone_number=doc.get("phone_number") or normalized,
+                name=doc["name"],
+                is_active=doc.get("is_active", True),
+                deactivated_at=doc.get("deactivated_at"),
+                role="PC",
+                pc_id=doc["pc_id"],
+                assigned_site=doc.get("assigned_site"),
+                shift_start=doc.get("shift_start"),
+                shift_end=doc.get("shift_end"),
+                shift_grace_minutes=doc.get("shift_grace_minutes"),
+            )
         logger.warning("No roster entry found for phone number: %s", normalized)
         return None
     return RosterEntry(**doc)
@@ -142,7 +177,22 @@ async def get_roster_by_employee_id(employee_id: str) -> RosterEntry | None:
     db = get_db()
     doc = await db.roster.find_one({"employee_id": employee_id})
     if doc is None:
-        return None
+        pc = await db.coordinators.find_one({"pc_id": employee_id})
+        if pc is None:
+            return None
+        return RosterEntry(
+            employee_id=pc["pc_id"],
+            phone_number=pc.get("phone_number") or "",
+            name=pc["name"],
+            is_active=pc.get("is_active", True),
+            deactivated_at=pc.get("deactivated_at"),
+            role="PC",
+            pc_id=pc["pc_id"],
+            assigned_site=pc.get("assigned_site"),
+            shift_start=pc.get("shift_start"),
+            shift_end=pc.get("shift_end"),
+            shift_grace_minutes=pc.get("shift_grace_minutes"),
+        )
     return RosterEntry(**doc)
 
 
@@ -162,6 +212,9 @@ async def ensure_indexes() -> None:
     await db.submissions.create_index("event_id", unique=True, sparse=True)
     await db.notifications.create_index("notification_id", unique=True)
     await db.notifications.create_index("status")
+    await db.attendance_overrides.create_index(
+        [("employee_id", 1), ("attendance_date", 1)], unique=True
+    )
 
 
 async def get_next_pc_id() -> str:
@@ -177,12 +230,18 @@ async def get_next_pc_id() -> str:
 
 async def register_coordinator(request: CoordinatorRegistrationRequest) -> Coordinator:
     db = get_db()
+    if request.phone_number and await db.roster.find_one({"phone_number": request.phone_number}):
+        raise ValueError(f"phone_number {request.phone_number} is already registered")
     pc_id = await get_next_pc_id()
     doc = {
         "pc_id": pc_id,
         "name": request.name,
         "phone_number": request.phone_number,
         "is_active": True,
+        "assigned_site": request.assigned_site.model_dump() if request.assigned_site else None,
+        "shift_start": request.shift_start,
+        "shift_end": request.shift_end,
+        "shift_grace_minutes": request.shift_grace_minutes,
     }
     await db.coordinators.insert_one(doc)
     return Coordinator(**doc)
@@ -227,6 +286,8 @@ async def update_coordinator(
 ) -> Coordinator | None:
     db = get_db()
     set_fields = updates.model_dump(exclude_unset=True)
+    if isinstance(set_fields.get("assigned_site"), AssignedSite):
+        set_fields["assigned_site"] = set_fields["assigned_site"].model_dump()
 
     if "is_active" in set_fields:
         current = await get_coordinator_by_id(pc_id)
@@ -256,6 +317,8 @@ async def delete_coordinator_if_unassigned(pc_id: str) -> int | None:
     """
     db = get_db()
     linked_supervisors = await db.roster.count_documents({"pc_id": pc_id})
+    linked_supervisors += await db.submissions.count_documents({"employee_id": pc_id})
+    linked_supervisors += await db.attendance_overrides.count_documents({"employee_id": pc_id})
     if linked_supervisors:
         return linked_supervisors
 
@@ -275,19 +338,52 @@ async def get_next_employee_id() -> str:
     return f"EMP{seq:03d}"
 
 
+async def _validated_hierarchy(
+    role: str,
+    pc_id: str | None,
+    parent_employee_id: str | None,
+) -> tuple[str | None, str | None]:
+    if role == "LS":
+        if not parent_employee_id:
+            raise ValueError("Local supervisors must be assigned to a field supervisor")
+        parent = await get_roster_by_employee_id(parent_employee_id)
+        if parent is None or parent.role != "FS":
+            raise ValueError("Local supervisor parent must be a registered field supervisor")
+        if not parent.pc_id:
+            raise ValueError(
+                "Assign the field supervisor to a project coordinator before adding local supervisors"
+            )
+        if pc_id is not None and pc_id != parent.pc_id:
+            raise ValueError("Local supervisor's coordinator must match the field supervisor's coordinator")
+        return parent.pc_id, parent.employee_id
+
+    if parent_employee_id:
+        raise ValueError("Only local supervisors can be assigned to a field supervisor")
+    if role in ("FS", "LSS"):
+        if not pc_id:
+            raise ValueError(f"{role} must be assigned to a project coordinator")
+        if await get_coordinator_by_id(pc_id) is None:
+            raise ValueError(f"pc_id {pc_id} does not match any registered coordinator")
+    return pc_id, None
+
+
 async def register_employee(request: EmployeeRegistrationRequest) -> RosterEntry:
-    if request.pc_id is not None:
-        if await get_coordinator_by_id(request.pc_id) is None:
-            raise ValueError(f"pc_id {request.pc_id} does not match any registered coordinator")
+    pc_id, parent_employee_id = await _validated_hierarchy(
+        request.role, request.pc_id, request.parent_employee_id
+    )
 
     db = get_db()
+    if await db.coordinators.find_one({"phone_number": request.phone_number}, {"_id": 1}):
+        raise ValueError(f"phone_number {request.phone_number} is already registered")
     employee_id = await get_next_employee_id()
     doc = {
         "employee_id": employee_id,
         "phone_number": request.phone_number,
         "name": request.name,
         "is_active": True,
-        "pc_id": request.pc_id,
+        "role": request.role,
+        "pc_id": pc_id,
+        "parent_employee_id": parent_employee_id,
         "area": request.area,
         "designation": request.designation,
         "assigned_site": request.assigned_site.model_dump() if request.assigned_site else None,
@@ -307,26 +403,46 @@ async def register_employee(request: EmployeeRegistrationRequest) -> RosterEntry
 async def update_employee_details(
     employee_id: str, updates: EmployeeUpdateRequest
 ) -> Optional[RosterEntry]:
-    if updates.pc_id is not None:
-        if await get_coordinator_by_id(updates.pc_id) is None:
-            raise ValueError(f"pc_id {updates.pc_id} does not match any registered coordinator")
-
     db = get_db()
+    current = await get_roster_by_employee_id(employee_id)
+    if current is None:
+        return None
     set_fields = {
         k: (v.model_dump() if isinstance(v, AssignedSite) else v)
         for k, v in updates.model_dump(exclude_unset=True).items()
     }
+    role = set_fields.get("role", current.role)
+    pc_id = set_fields.get("pc_id", current.pc_id)
+    parent_employee_id = set_fields.get(
+        "parent_employee_id",
+        None if role != current.role and role != "LS" else current.parent_employee_id,
+    )
+    if {"role", "pc_id", "parent_employee_id"} & set_fields.keys():
+        if current.role == "FS" and (role != "FS" or pc_id != current.pc_id):
+            local_supervisor_count = await db.roster.count_documents(
+                {"role": "LS", "parent_employee_id": employee_id}
+            )
+            if local_supervisor_count:
+                raise ValueError(
+                    f"Cannot change the role or coordinator for {employee_id} while "
+                    f"{local_supervisor_count} local supervisor(s) report to them; "
+                    "reassign those local supervisors first"
+                )
+        pc_id, parent_employee_id = await _validated_hierarchy(
+            role, pc_id, parent_employee_id
+        )
+        set_fields["pc_id"] = pc_id
+        set_fields["parent_employee_id"] = parent_employee_id
 
     if "is_active" in set_fields:
-        current = await get_roster_by_employee_id(employee_id)
-        if current is not None and current.is_active != set_fields["is_active"]:
+        if current.is_active != set_fields["is_active"]:
             if set_fields["is_active"] is False:
                 set_fields["deactivated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             else:
                 set_fields["deactivated_at"] = None
 
     if not set_fields:
-        return await get_roster_by_employee_id(employee_id)
+        return current
 
     try:
         doc = await db.roster.find_one_and_update(
@@ -356,6 +472,8 @@ async def delete_employee_without_attendance(employee_id: str) -> int | None:
         return None
 
     attendance_count = await db.submissions.count_documents({"employee_id": employee_id})
+    attendance_count += await db.roster.count_documents({"parent_employee_id": employee_id})
+    attendance_count += await db.attendance_overrides.count_documents({"employee_id": employee_id})
     if attendance_count:
         return attendance_count
 
@@ -392,10 +510,54 @@ async def list_employees_by_pc(pc_id: str) -> list[RosterEntry]:
     return entries
 
 
+async def list_attendance_people(
+    pc_id: str | None = None,
+    role: str | None = None,
+    is_active: bool | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[RosterEntry], int]:
+    employees, employee_total = await list_employees(
+        pc_id=pc_id, role=role, is_active=is_active, search=search,
+        page=1, page_size=100_000
+    )
+    coordinators: list[RosterEntry] = []
+    coordinator_total = 0
+    if role in (None, "PC"):
+        pcs, coordinator_total = await list_coordinators(
+            pc_id=pc_id, is_active=is_active, search=search,
+            page=1, page_size=100_000
+        )
+        coordinators = [
+            RosterEntry(
+                employee_id=pc.pc_id,
+                phone_number=pc.phone_number or "",
+                name=pc.name,
+                is_active=pc.is_active,
+                deactivated_at=pc.deactivated_at,
+                role="PC",
+                pc_id=pc.pc_id,
+                assigned_site=pc.assigned_site,
+                shift_start=pc.shift_start,
+                shift_end=pc.shift_end,
+                shift_grace_minutes=pc.shift_grace_minutes,
+            )
+            for pc in pcs
+        ]
+    people = coordinators + employees
+    people.sort(key=lambda person: person.name.casefold())
+    total = employee_total + coordinator_total
+    start = (page - 1) * page_size
+    return people[start:start + page_size], total
+
+
 async def list_employees(
     pc_id: str | None = None,
     area: str | None = None,
     designation: str | None = None,
+    role: str | None = None,
+    parent_employee_id: str | None = None,
     is_active: bool | None = None,
     search: str | None = None,
     page: int = 1,
@@ -408,6 +570,10 @@ async def list_employees(
         query["area"] = area
     if designation is not None:
         query["designation"] = designation
+    if role is not None:
+        query["role"] = role
+    if parent_employee_id is not None:
+        query["parent_employee_id"] = parent_employee_id
     if is_active is not None:
         query["is_active"] = is_active
     if search:
@@ -475,12 +641,15 @@ async def list_attendance(
             query["$and"] = date_conditions
 
     if pc_id is not None:
-        employee_ids = [e.employee_id for e in await list_employees_by_pc(pc_id)]
+        employee_ids = [pc_id]
+        employee_ids.extend(e.employee_id for e in await list_employees_by_pc(pc_id))
         query["employee_id"] = {"$in": employee_ids}
 
     if search:
         matching, _ = await list_employees(search=search, page=1, page_size=10_000)
+        matching_pcs, _ = await list_coordinators(search=search, page_size=10_000)
         matched_ids = [e.employee_id for e in matching]
+        matched_ids.extend(pc.pc_id for pc in matching_pcs)
         if "employee_id" in query and isinstance(query["employee_id"], dict):
             existing_ids = set(query["employee_id"]["$in"])
             query["employee_id"] = {"$in": list(existing_ids & set(matched_ids))}
@@ -533,7 +702,12 @@ async def has_submission_today(employee_id: str, date_str: str) -> bool:
             ],
         }
     )
-    return existing is not None
+    if existing is not None:
+        return True
+    return await db.attendance_overrides.find_one(
+        {"employee_id": employee_id, "attendance_date": norm_date},
+        {"_id": 1},
+    ) is not None
 
 
 async def resolve_flagged_submission(
@@ -631,6 +805,20 @@ async def get_submissions_grouped(
         if current is None or rank(doc) > rank(current):
             result[emp_id][day] = doc
 
+    overrides = db.attendance_overrides.find({
+        "employee_id": {"$in": employee_ids},
+        "attendance_date": {"$gte": norm_from, "$lte": norm_to},
+    })
+    async for override in overrides:
+        emp_id = override["employee_id"]
+        day = override["attendance_date"]
+        result[emp_id][day] = {
+            "employee_id": emp_id,
+            "attendance_date": day,
+            "attendance_code": override["attendance_code"],
+            "entry_type": "override",
+        }
+
     return result
 
 
@@ -651,6 +839,10 @@ async def create_manual_attendance(
     db = get_db()
     doc = {
         "employee_id": employee_id,
+        "employee_name": roster_entry.name,
+        "person_role": roster_entry.role,
+        "pc_id": roster_entry.pc_id,
+        "parent_employee_id": roster_entry.parent_employee_id,
         "sender_phone": roster_entry.phone_number,
         "caption": None,
         "media_url": None,
@@ -676,6 +868,65 @@ async def create_manual_attendance(
     result = await db.submissions.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
     return doc
+
+
+async def save_attendance_override(
+    employee_id: str,
+    attendance_date: str,
+    attendance_code: str,
+    reason: str,
+    changed_by: str,
+) -> dict:
+    person = await get_roster_by_employee_id(employee_id)
+    if person is None:
+        raise ValueError(f"No attendance participant found with ID: {employee_id}")
+
+    norm_date = normalize_date_str(attendance_date)
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    existing = await db.attendance_overrides.find_one(
+        {"employee_id": employee_id, "attendance_date": norm_date}
+    )
+    previous_code = existing.get("attendance_code") if existing else None
+    if existing is None:
+        submissions = await get_submissions_grouped(
+            [employee_id], norm_date, norm_date
+        )
+        previous_submission = submissions.get(employee_id, {}).get(norm_date)
+        if previous_submission is not None:
+            previous_code = marker_for_submission(previous_submission)
+    change = {
+        "attendance_code": attendance_code,
+        "reason": reason.strip(),
+        "changed_by": changed_by,
+        "changed_at_utc": now,
+    }
+    await db.attendance_overrides.update_one(
+        {"employee_id": employee_id, "attendance_date": norm_date},
+        {
+            "$set": change,
+            "$setOnInsert": {
+                "employee_id": employee_id,
+                "attendance_date": norm_date,
+                "person_role": person.role,
+                "pc_id": person.pc_id,
+                "parent_employee_id": person.parent_employee_id,
+            },
+            "$push": {
+                "history": {
+                    **change,
+                    "previous_code": previous_code,
+                }
+            },
+        },
+        upsert=True,
+    )
+    return {
+        "employee_id": employee_id,
+        "attendance_date": norm_date,
+        **change,
+        "previous_code": previous_code,
+    }
 
 
 async def update_admin_last_seen(timestamp) -> None:

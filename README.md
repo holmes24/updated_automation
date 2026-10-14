@@ -36,10 +36,28 @@ FastAPI never performs the expensive attendance AI pipeline synchronously. Redis
 - **L** — Present but late
 - **F** — Flagged and awaiting admin review
 - **A** — Absent
+- **AL** — Attendance submitted after the allowed shift window
+- **HD / WO / H** — Half day / week off / holiday (available as audited admin overrides)
 - **N/A** — Employee inactive
-- **Blank** — Today/future with no submission yet (export grid)
+- **—** — Today/future with no submission yet
 
 An approved flagged submission counts as P/L; a rejected flagged submission counts as A.
+
+## Attendance groups and monthly review
+
+Attendance participants are organized into four groups: Project Co-Ordinators (PC),
+Field Supervisors (FS), Local Supervisors (LS), and Local Supervisor Scanning (LSS).
+FS and LSS report to a PC; LS reports to an FS and inherits that FS's PC. PCs need
+an assigned attendance site and shift, and face enrollment is available for every group.
+Legacy roster entries without a stored department retain the compatible FS default;
+review and reassign these entries in Attendance Participants before relying on historical
+department totals.
+
+The admin Attendance page provides a monthly grid and an Excel export with one tab
+for each group. Automated submissions remain the source result unless an admin
+changes a grid cell. Each override requires a reason and is stored separately with
+the prior code, admin identity, and timestamp so the original submission remains
+available for audit.
 
 ## Fraud and evidence checks
 

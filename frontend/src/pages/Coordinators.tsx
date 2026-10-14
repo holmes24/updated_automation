@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { deleteCoordinator, listCoordinators, updateCoordinator } from '../api/coordinators';
-import type { Coordinator } from '../types';
+import type { Coordinator, Employee } from '../types';
 import { CoordinatorFormModal } from '../components/CoordinatorFormModal';
-import { Trash2, UserX, UserCheck } from 'lucide-react';
+import { EnrollFaceModal } from '../components/EnrollFaceModal';
+import { Pencil, ScanFace, Trash2, UserX, UserCheck } from 'lucide-react';
 
 const PAGE_SIZE = 25;
 
@@ -13,7 +14,8 @@ export function CoordinatorsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Coordinator | 'new' | null>(null);
+  const [enrolling, setEnrolling] = useState<Employee | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -45,7 +47,7 @@ export function CoordinatorsPage() {
   }
 
   async function removeCoordinator(coordinator: Coordinator) {
-    if (!window.confirm(`Permanently delete coordinator ${coordinator.name} (${coordinator.pc_id})? This is only allowed when no field supervisors are assigned.`)) {
+    if (!window.confirm(`Permanently delete coordinator ${coordinator.name} (${coordinator.pc_id})? This is only allowed when no roster, attendance, or override records are linked.`)) {
       return;
     }
 
@@ -68,14 +70,14 @@ export function CoordinatorsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-lg font-medium" style={{ color: 'var(--color-ink)' }}>
-          Coordinators
+          Project Co-Ordinators
         </h1>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => setEditing('new')}
           className="px-3 py-1.5 rounded-md text-sm font-medium"
           style={{ background: 'var(--color-accent)', color: 'white' }}
         >
-          Add coordinator
+          Add project co-ordinator
         </button>
       </div>
 
@@ -93,11 +95,12 @@ export function CoordinatorsPage() {
         />
       </div>
 
-      {showForm && (
+      {editing && (
         <CoordinatorFormModal
-          onClose={() => setShowForm(false)}
+          coordinator={editing === 'new' ? undefined : editing}
+          onClose={() => setEditing(null)}
           onSaved={() => {
-            setShowForm(false);
+            setEditing(null);
             load();
           }}
         />
@@ -113,7 +116,7 @@ export function CoordinatorsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: 'var(--color-surface-sunken)' }}>
-              {['ID', 'Name', 'Phone', 'Status', 'Action'].map((h) => (
+              {['ID', 'Name', 'Phone', 'Attendance site', 'Status', 'Action'].map((h) => (
                 <th
                   key={h}
                   className={`px-4 py-2.5 text-xs font-medium ${h === 'Action' ? 'text-right' : 'text-left'}`}
@@ -136,6 +139,9 @@ export function CoordinatorsPage() {
                 <td className="px-4 py-2.5" style={{ color: 'var(--color-ink-muted)' }}>
                   {c.phone_number ?? '—'}
                 </td>
+                <td className="px-4 py-2.5" style={{ color: 'var(--color-ink-muted)' }}>
+                  {c.assigned_site?.name ?? 'Not configured'}
+                </td>
                 <td
                   className="px-4 py-2.5"
                   style={{ color: c.is_active ? 'var(--color-present)' : 'var(--color-inactive)' }}
@@ -143,6 +149,37 @@ export function CoordinatorsPage() {
                   {c.is_active ? 'Active' : `Inactive since ${c.deactivated_at ?? '—'}`}
                 </td>
                 <td className="px-4 py-2.5 text-right">
+                  <button
+                    onClick={() => setEnrolling({
+                      employee_id: c.pc_id,
+                      phone_number: c.phone_number ?? '',
+                      name: c.name,
+                      role: 'PC',
+                      is_active: c.is_active,
+                      deactivated_at: c.deactivated_at,
+                      pc_id: c.pc_id,
+                      parent_employee_id: null,
+                      area: null,
+                      designation: 'Project Co-Ordinator',
+                      assigned_site: c.assigned_site,
+                      shift_start: c.shift_start,
+                      shift_end: c.shift_end,
+                      shift_grace_minutes: c.shift_grace_minutes,
+                    })}
+                    className="p-1.5 rounded-md transition-colors hover:bg-[var(--color-accent-bg)]"
+                    style={{ color: 'var(--color-accent)' }}
+                    title="Enroll face"
+                  >
+                    <ScanFace size={16} />
+                  </button>
+                  <button
+                    onClick={() => setEditing(c)}
+                    className="p-1.5 rounded-md transition-colors hover:bg-[var(--color-accent-bg)]"
+                    style={{ color: 'var(--color-accent)' }}
+                    title="Edit coordinator attendance settings"
+                  >
+                    <Pencil size={16} />
+                  </button>
                   <button
                     onClick={() => toggleActive(c)}
                     className="p-1.5 rounded-md transition-colors hover:bg-black/5"
@@ -166,7 +203,7 @@ export function CoordinatorsPage() {
             ))}
             {!loading && coordinators.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
+                <td colSpan={6} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
                   No coordinators match these filters.
                 </td>
               </tr>
@@ -200,6 +237,7 @@ export function CoordinatorsPage() {
                 Next
               </button>
             </div>
+            {enrolling && <EnrollFaceModal employee={enrolling} onClose={() => setEnrolling(null)} />}
           </div>
         )}
       </div>

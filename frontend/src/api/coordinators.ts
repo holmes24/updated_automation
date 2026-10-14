@@ -1,5 +1,12 @@
 import { apiClient } from './client';
-import type { Coordinator, PageMeta } from '../types';
+import type { AssignedSite, Coordinator, PageMeta } from '../types';
+
+export type CoordinatorAttendanceSettings = {
+  assigned_site?: AssignedSite | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
+  shift_grace_minutes?: number | null;
+};
 
 export interface CoordinatorListParams {
   pc_id?: string;
@@ -18,14 +25,17 @@ export async function listCoordinators(params?: CoordinatorListParams) {
   return data;
 }
 
-export async function createCoordinator(payload: { name: string; phone_number?: string }) {
+export async function createCoordinator(
+  payload: { name: string; phone_number?: string } & CoordinatorAttendanceSettings
+) {
   const { data } = await apiClient.post<Coordinator>('/coordinators', payload);
   return data;
 }
 
 export async function updateCoordinator(
   pc_id: string,
-  payload: Partial<Pick<Coordinator, 'name' | 'phone_number' | 'is_active'>>
+  payload: Partial<Pick<Coordinator, 'name' | 'phone_number' | 'is_active'>> &
+    CoordinatorAttendanceSettings
 ) {
   const { data } = await apiClient.patch<Coordinator>(`/coordinators/${pc_id}`, payload);
   return data;

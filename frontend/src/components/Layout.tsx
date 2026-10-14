@@ -5,8 +5,8 @@ import { useAuth } from '../context/AuthContext';
 
 const NAV_ITEMS = [
   { to: '/attendance', label: 'Attendance', icon: CalendarCheck },
-  { to: '/employees', label: 'Field Supervisors', icon: Users },
-  { to: '/coordinators', label: 'Coordinators', icon: Share2 },
+  { to: '/employees', label: 'Attendance Participants', icon: Users },
+  { to: '/coordinators', label: 'Project Co-Ordinators', icon: Share2 },
 ];
 
 export function Layout() {

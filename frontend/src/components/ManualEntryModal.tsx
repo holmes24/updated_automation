@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { createManualEntry, DuplicateSubmissionError } from '../api/attendance';
-import { listEmployees } from '../api/employees';
+import { createManualEntry, DuplicateSubmissionError, searchAttendancePeople } from '../api/attendance';
 import type { AttendanceRecord, Employee } from '../types';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -30,8 +29,8 @@ export function ManualEntryModal({
     }
     setSearching(true);
     try {
-      const { employees } = await listEmployees({ search: query, is_active: true, page_size: 8 });
-      setEmployeeOptions(employees);
+      const { people } = await searchAttendancePeople(query, 8);
+      setEmployeeOptions(people);
     } finally {
       setSearching(false);
     }
@@ -82,7 +81,7 @@ export function ManualEntryModal({
         </p>
 
         <label className="block text-xs mb-1" style={{ color: 'var(--color-ink-muted)' }}>
-          Employee
+          Attendance participant
         </label>
         {selectedEmployee ? (
           <div

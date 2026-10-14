@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 import { createEmployee, updateEmployee, type CreateEmployeePayload } from '../api/employees';
-import type { Coordinator, Employee } from '../types';
+import type { AttendanceRole, Coordinator, Employee } from '../types';
 import { AssignedSiteMap, type SiteValue } from './AssignedSiteMap';
 
 const inputStyle = {
@@ -13,11 +13,13 @@ const inputStyle = {
 export function EmployeeFormModal({
   employee,
   coordinators,
+  fieldSupervisors,
   onClose,
   onSaved,
 }: {
   employee: Employee | null; // null = creating new
   coordinators: Coordinator[];
+  fieldSupervisors: Employee[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -30,7 +32,9 @@ export function EmployeeFormModal({
   const [form, setForm] = useState<CreateEmployeePayload>({
     phone_number: employee?.phone_number ?? '',
     name: employee?.name ?? '',
+    role: employee?.role === 'PC' ? 'FS' : employee?.role ?? 'FS',
     pc_id: employee?.pc_id ?? undefined,
+    parent_employee_id: employee?.parent_employee_id ?? undefined,
     area: employee?.area ?? undefined,
     designation: employee?.designation ?? undefined,
     assigned_site: employee?.assigned_site ?? undefined,
@@ -59,12 +63,32 @@ export function EmployeeFormModal({
   }
 
   const phoneValid = phoneDigits.length === 10;
+  const selectedFieldSupervisor = fieldSupervisors.find(
+    (supervisor) => supervisor.employee_id === form.parent_employee_id
+  );
+  const hierarchyValid = form.role === 'LS'
+    ? Boolean(selectedFieldSupervisor?.pc_id)
+    : Boolean(form.pc_id);
+  function handleRoleChange(role: Exclude<AttendanceRole, 'PC'>) {
+    setForm((current) => ({
+      ...current,
+      role,
+      pc_id: role === 'LS' ? undefined : current.pc_id,
+      parent_employee_id: role === 'LS' ? current.parent_employee_id : undefined,
+    }));
+  }
 
   async function handleSave() {
     setSaving(true);
     setError(null);
     try {
-      const payload = { ...form, assigned_site: site };
+      const payload = {
+        ...form,
+        assigned_site: site ?? null,
+        shift_start: form.shift_start || null,
+        shift_end: form.shift_end || null,
+        shift_grace_minutes: form.shift_grace_minutes ?? null,
+      };
       if (employee) {
         await updateEmployee(employee.employee_id, payload);
       } else {
@@ -97,10 +121,25 @@ export function EmployeeFormModal({
         style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface-raised)' }}
       >
         <h2 className="text-base font-medium mb-4" style={{ color: 'var(--color-ink)' }}>
-          {employee ? `Edit ${employee.employee_id}` : 'New field supervisor'}
+          {employee ? `Edit ${employee.employee_id}` : 'New attendance participant'}
         </h2>
 
         <div className="grid grid-cols-2 gap-3 mb-3">
+          <Field label="Department" required>
+            <select
+              value={form.role}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === 'FS' || value === 'LS' || value === 'LSS') handleRoleChange(value);
+              }}
+              className="w-full px-3 py-2 rounded-md text-sm border"
+              style={inputStyle}
+            >
+              <option value="FS">Field Supervisor (FS)</option>
+              <option value="LS">Local Supervisor (LS)</option>
+              <option value="LSS">Local Supervisor Scanning (LSS)</option>
+            </select>
+          </Field>
           <Field label="Name" required>
             <input
               value={form.name}
@@ -140,21 +179,51 @@ export function EmployeeFormModal({
               </p>
             )}
           </Field>
-          <Field label="Coordinator">
-            <select
-              value={form.pc_id ?? ''}
-              onChange={(e) => set('pc_id', e.target.value || undefined)}
-              className="w-full px-3 py-2 rounded-md text-sm border"
-              style={inputStyle}
-            >
-              <option value="">Unassigned</option>
-              {coordinators.map((c) => (
-                <option key={c.pc_id} value={c.pc_id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
+          {form.role === 'LS' ? (
+            <Field label="Reports to: Field Supervisor" required>
+              <select
+                value={form.parent_employee_id ?? ''}
+                onChange={(e) => {
+                  const parent = fieldSupervisors.find((person) => person.employee_id === e.target.value);
+                  setForm((current) => ({
+                    ...current,
+                    parent_employee_id: parent?.employee_id,
+                    pc_id: parent?.pc_id ?? undefined,
+                  }));
+                }}
+                className="w-full px-3 py-2 rounded-md text-sm border"
+                style={inputStyle}
+              >
+                <option value="">Select field supervisor</option>
+                {fieldSupervisors.map((supervisor) => (
+                  <option key={supervisor.employee_id} value={supervisor.employee_id}>
+                    {supervisor.name} ({supervisor.employee_id}){supervisor.pc_id ? '' : ' — coordinator not assigned'}
+                  </option>
+                ))}
+              </select>
+              {selectedFieldSupervisor && !selectedFieldSupervisor.pc_id && (
+                <p className="mt-1 text-xs" style={{ color: 'var(--color-absent)' }}>
+                  Assign this field supervisor to a project co-ordinator first.
+                </p>
+              )}
+            </Field>
+          ) : (
+            <Field label="Reports to: Project Co-ordinator" required>
+              <select
+                value={form.pc_id ?? ''}
+                onChange={(e) => set('pc_id', e.target.value || undefined)}
+                className="w-full px-3 py-2 rounded-md text-sm border"
+                style={inputStyle}
+              >
+                <option value="">Select project co-ordinator</option>
+                {coordinators.map((c) => (
+                  <option key={c.pc_id} value={c.pc_id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Area">
             <input
               value={form.area ?? ''}
@@ -214,7 +283,7 @@ export function EmployeeFormModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || !form.name.trim() || !phoneValid}
+            disabled={saving || !form.name.trim() || !phoneValid || !hierarchyValid}
             className="px-3 py-1.5 rounded-md text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'white' }}
           >

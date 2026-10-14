@@ -3,8 +3,6 @@ Create a formatted, date-wise attendance Excel workbook.
 Includes an 'Unassigned PC' sheet so unassigned employees are never omitted.
 """
 
-import re
-from collections import defaultdict
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -45,23 +43,6 @@ def _value(value, fallback=MISSING):
     return value
 
 
-def _sanitize_sheet_name(name: str) -> str:
-    cleaned = re.sub(r"[\[\]:*?/\\]", "", str(name)).strip()
-    return cleaned[:31] or "Unassigned"
-
-
-def _unique_sheet_name(wb: Workbook, requested: str) -> str:
-    base = _sanitize_sheet_name(requested)
-    candidate = base
-    counter = 2
-    existing = {s.casefold() for s in wb.sheetnames}
-    while candidate.casefold() in existing:
-        suffix = f" ({counter})"
-        candidate = f"{base[:31 - len(suffix)]}{suffix}"
-        counter += 1
-    return candidate
-
-
 def _style_sheet(ws, header_row: int = 1):
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = f"A{header_row + 1}"
@@ -90,6 +71,19 @@ def build_export_workbook(
     days: list[str],
 ) -> bytes:
     wb = Workbook()
+    people = [
+        {
+            "employee_id": pc["pc_id"],
+            "name": pc.get("name"),
+            "role": "PC",
+            "pc_id": pc["pc_id"],
+            "area": pc.get("area"),
+            "assigned_site": pc.get("assigned_site"),
+            "is_active": pc.get("is_active", True),
+            "deactivated_at": pc.get("deactivated_at"),
+        }
+        for pc in coordinators
+    ] + employees
 
     # --- Summary Sheet ---
     summary = wb.active
@@ -105,7 +99,10 @@ def build_export_workbook(
 
     summary.append(["Report Start", days[0] if days else NOT_PROVIDED])
     summary.append(["Report End", days[-1] if days else NOT_PROVIDED])
-    summary.append(["Total Employees in Roster", len(employees)])
+    summary.append([
+        "Total Attendance Participants",
+        sum(grids.get(str(person["employee_id"])) is not None for person in people),
+    ])
     summary.append([])
 
     summary.append(["Code", "Meaning"])
@@ -134,72 +131,54 @@ def build_export_workbook(
     summary.column_dimensions["A"].width = 22
     summary.column_dimensions["B"].width = 50
 
-    # --- Coordinators Sheet ---
-    ws_coord = wb.create_sheet("Coordinators")
-    ws_coord.append(["PC ID", "Name", "Phone", "Status"])
-    for pc in coordinators:
-        ws_coord.append([
-            _value(pc.get("pc_id")),
-            _value(pc.get("name")),
-            _value(pc.get("phone_number"), NOT_PROVIDED),
-            "Active" if pc.get("is_active", True) else "Inactive",
-        ])
-    _style_sheet(ws_coord)
-    _fit_columns(ws_coord)
-
-    # --- Field People Sheet ---
-    ws_field = wb.create_sheet("Field People")
-    ws_field.append(["Employee ID", "Name", "PC ID", "Area", "Designation", "Status"])
-    for emp in employees:
-        ws_field.append([
-            _value(emp.get("employee_id")),
-            _value(emp.get("name")),
-            _value(emp.get("pc_id"), "Unassigned"),
-            _value(emp.get("area")),
-            _value(emp.get("designation")),
-            "Active" if emp.get("is_active", True) else "Inactive",
-        ])
-    _style_sheet(ws_field)
-    _fit_columns(ws_field)
-
-    # --- Group employees by PC ID (including unassigned) ---
-    pc_name_by_id = {str(pc.get("pc_id")): _value(pc.get("name")) for pc in coordinators if pc.get("pc_id")}
-    grouped = defaultdict(list)
-
-    for emp in employees:
-        emp_id = str(emp.get("employee_id", ""))
-        grid = grids.get(emp_id)
-        if grid is None:
-            continue  # Deactivated before report start
-        pc_id = str(emp.get("pc_id") or "").strip()
-        grouped[pc_id or "__UNASSIGNED__"].append(emp)
-
-    # --- Generate date-wise worksheets ---
-    for pc_id, pc_employees in grouped.items():
-        if pc_id == "__UNASSIGNED__":
-            sheet_title = _unique_sheet_name(wb, "Unassigned PC")
-        else:
-            sheet_title = _unique_sheet_name(wb, pc_name_by_id.get(pc_id, pc_id))
-
+    # --- Department attendance worksheets ---
+    roles = [
+        ("PC", "Project Co-Ordinators"),
+        ("FS", "Field Supervisors"),
+        ("LS", "Local supervisors"),
+        ("LSS", "Local supervisor scanning"),
+    ]
+    person_by_id = {str(person["employee_id"]): person for person in people}
+    for role, sheet_title in roles:
         ws_pc = wb.create_sheet(sheet_title)
         # Editable daily codes; totals recalculate automatically in Excel.
-        headers = ["Location", "Name", "Position"] + days + ["Present", "Absent", "HD", "WO", "Holidays", "Late", "AL"]
+        headers = ["ID", "Location", "Name", "Reports To", "Position"] + days + ["Present", "Absent", "HD", "WO", "Holidays", "Late", "AL"]
         ws_pc.append(headers)
         from openpyxl.worksheet.datavalidation import DataValidation
         validation = DataValidation(type="list", formula1='"P,L,A,AL,HD,WO,H,M,F,N/A"', allow_blank=True)
         validation.error = "Select an attendance code from the list"
         validation.showErrorMessage = True
         ws_pc.add_data_validation(validation)
-        for emp in sorted(pc_employees, key=lambda x: str(x.get("name") or "").casefold()):
+        role_people = [
+            person for person in people
+            if person.get("role", "FS") == role
+            and grids.get(str(person.get("employee_id", ""))) is not None
+        ]
+        for emp in sorted(role_people, key=lambda x: str(x.get("name") or "").casefold()):
             emp_id = str(emp.get("employee_id", ""))
             grid = grids.get(emp_id) or {}
             markers = [_value(grid.get(day), NO_RESULT) for day in days]
             site = emp.get("assigned_site") or {}
             location = site.get("name") if isinstance(site, dict) else None
-            ws_pc.append([_value(location or emp.get("area")), _value(emp.get("name")), _value(emp.get("designation"))] + markers)
+            parent_id = emp.get("parent_employee_id") or (emp.get("pc_id") if role != "PC" else None)
+            parent = person_by_id.get(str(parent_id)) if parent_id else None
+            parent_label = f"{parent.get('name')} ({parent_id})" if parent else _value(parent_id, "—")
+            position = emp.get("designation") or {
+                "PC": "Project Co-Ordinator",
+                "FS": "Field Supervisor",
+                "LS": "Local Supervisor",
+                "LSS": "Local Supervisor Scanning",
+            }[role]
+            ws_pc.append([
+                _value(emp.get("employee_id")),
+                _value(location or emp.get("area")),
+                _value(emp.get("name")),
+                parent_label,
+                position,
+            ] + markers)
             r = ws_pc.max_row
-            first = 4
-            last = 3 + len(days)
+            first = 6
+            last = 5 + len(days)
             range_ref = f"{get_column_letter(first)}{r}:{get_column_letter(last)}{r}"
             formulas = [
                 f'=COUNTIF({range_ref},"P")+COUNTIF({range_ref},"L")+COUNTIF({range_ref},"M")',
@@ -209,20 +188,22 @@ def build_export_workbook(
             ]
             for offset, formula in enumerate(formulas, start=last + 1):
                 ws_pc.cell(r, offset, formula)
-            for c, marker in enumerate(markers, start=4):
+            for c, marker in enumerate(markers, start=6):
                 cell = ws_pc.cell(r, c)
                 cell.fill = MARKER_FILLS.get(marker, PatternFill())
                 cell.alignment = Alignment(horizontal="center")
                 validation.add(cell)
         _style_sheet(ws_pc)
-        ws_pc.freeze_panes = "D2"
+        ws_pc.freeze_panes = "F2"
         ws_pc.auto_filter.ref = ws_pc.dimensions
-        ws_pc.column_dimensions["A"].width = 28
-        ws_pc.column_dimensions["B"].width = 26
-        ws_pc.column_dimensions["C"].width = 23
-        for col_idx in range(4, 4 + len(days)):
+        ws_pc.column_dimensions["A"].width = 14
+        ws_pc.column_dimensions["B"].width = 24
+        ws_pc.column_dimensions["C"].width = 26
+        ws_pc.column_dimensions["D"].width = 32
+        ws_pc.column_dimensions["E"].width = 28
+        for col_idx in range(6, 6 + len(days)):
             ws_pc.column_dimensions[get_column_letter(col_idx)].width = 13
-        for col_idx in range(4 + len(days), 11 + len(days)):
+        for col_idx in range(6 + len(days), 13 + len(days)):
             ws_pc.column_dimensions[get_column_letter(col_idx)].width = 14
 
     buf = BytesIO()

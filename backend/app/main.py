@@ -9,11 +9,13 @@ Webhook design constraints:
 import logging
 import hmac
 from datetime import datetime, timezone, timedelta
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+from typing import Literal
 
 from app.auth import create_access_token, get_current_admin, verify_api_key, verify_password
 from app.config import settings
@@ -29,12 +31,14 @@ from app.db.mongodb import (
     get_roster_by_employee_id,
     get_submissions_grouped,
     list_attendance,
+    list_attendance_people,
     list_coordinators,
     list_employees,
     lookup_roster,
     register_coordinator,
     register_employee,
     resolve_flagged_submission,
+    save_attendance_override,
     save_enrollment,
     update_admin_last_seen,
     update_coordinator,
@@ -82,6 +86,13 @@ class ManualAttendanceRequest(BaseModel):
     employee_id: str
     date: str  # "YYYY-MM-DD"
     reason: str  # required — the whole point of this endpoint is an auditable justification
+
+
+class AttendanceOverrideRequest(BaseModel):
+    employee_id: str
+    date: str
+    attendance_code: Literal["P", "L", "A", "AL", "HD", "WO", "H", "M", "F", "N/A"]
+    reason: str
 
 
 @app.on_event("startup")
@@ -258,7 +269,10 @@ async def create_coordinator(
     (PC001, PC002, ...). Field supervisors are linked to a PC via
     pc_id on their own roster record (set at registration or via PATCH).
     """
-    coordinator = await register_coordinator(request)
+    try:
+        coordinator = await register_coordinator(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return coordinator
 
 
@@ -267,7 +281,10 @@ async def patch_coordinator(
     pc_id: str, request: CoordinatorUpdateRequest, admin: AdminUser = Depends(get_current_admin)
 ):
     """Edit a coordinator's details, or deactivate them (is_active: false)."""
-    updated = await update_coordinator(pc_id, request)
+    try:
+        updated = await update_coordinator(pc_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if updated is None:
         raise HTTPException(status_code=404, detail=f"No coordinator found with pc_id: {pc_id}")
     return updated
@@ -277,7 +294,7 @@ async def patch_coordinator(
 async def delete_coordinator(
     pc_id: str, admin: AdminUser = Depends(get_current_admin)
 ):
-    """Permanently delete a coordinator only when no supervisors are assigned."""
+    """Permanently delete a coordinator only when no linked records exist."""
     linked_supervisors = await delete_coordinator_if_unassigned(pc_id)
     if linked_supervisors is None:
         raise HTTPException(status_code=404, detail=f"No coordinator found with pc_id: {pc_id}")
@@ -285,8 +302,8 @@ async def delete_coordinator(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Cannot delete coordinator {pc_id}: {linked_supervisors} field "
-                "supervisor(s) are assigned. Reassign or remove those supervisors first."
+                f"Cannot delete coordinator {pc_id}: {linked_supervisors} roster, "
+                "attendance, or override record(s) are linked."
             ),
         )
     return {"status": "deleted"}
@@ -370,7 +387,7 @@ async def patch_employee(
 async def delete_employee(
     employee_id: str, admin: AdminUser = Depends(get_current_admin)
 ):
-    """Permanently delete a supervisor only when they have no attendance history."""
+    """Permanently delete a participant only when no history or child links exist."""
     attendance_count = await delete_employee_without_attendance(employee_id)
     if attendance_count is None:
         raise HTTPException(
@@ -380,8 +397,8 @@ async def delete_employee(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Cannot delete supervisor {employee_id}: {attendance_count} "
-                "attendance record(s) exist. Deactivate the supervisor to preserve history."
+                f"Cannot delete participant {employee_id}: {attendance_count} "
+                "attendance record(s) or child assignment(s) exist."
             ),
         )
     return {"status": "deleted"}
@@ -392,6 +409,8 @@ async def get_employees(
     pc_id: str | None = None,
     area: str | None = None,
     designation: str | None = None,
+    role: str | None = None,
+    parent_employee_id: str | None = None,
     is_active: bool | None = None,
     search: str | None = None,
     page: int = 1,
@@ -404,13 +423,97 @@ async def get_employees(
     search matches name or phone_number (case-insensitive substring).
     """
     employees, total = await list_employees(
-        pc_id=pc_id, area=area, designation=designation, is_active=is_active,
+        pc_id=pc_id, area=area, designation=designation, role=role,
+        parent_employee_id=parent_employee_id, is_active=is_active,
         search=search, page=page, page_size=page_size,
     )
     return {
         "count": len(employees), "total": total, "page": page, "page_size": page_size,
         "employees": employees,
     }
+
+
+@app.get("/attendance/grid")
+async def get_attendance_grid(
+    month: int,
+    year: int,
+    pc_id: str | None = None,
+    role: Literal["PC", "FS", "LS", "LSS"] | None = None,
+    admin: AdminUser = Depends(get_current_admin),
+):
+    """Return monthly attendance for PC, FS, LS, and LSS participants."""
+    import calendar
+
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="month must be between 1 and 12")
+    try:
+        date_from = f"{year:04d}-{month:02d}-01"
+        date_to = f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
+        days = daterange(date_from, date_to)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    people, _ = await list_attendance_people(
+        pc_id=pc_id, role=role, page=1, page_size=100_000
+    )
+    person_ids = [person.employee_id for person in people]
+    submissions = await get_submissions_grouped(person_ids, date_from, date_to)
+
+    rows = []
+    for person in people:
+        grid = compute_employee_grid(
+            person.is_active,
+            person.deactivated_at,
+            submissions.get(person.employee_id, {}),
+            days,
+        )
+        if grid is None:
+            continue
+        rows.append({
+            "employee_id": person.employee_id,
+            "name": person.name,
+            "role": person.role,
+            "pc_id": person.pc_id,
+            "parent_employee_id": person.parent_employee_id,
+            "area": person.area,
+            "designation": person.designation,
+            "is_active": person.is_active,
+            "attendance": grid,
+        })
+    return {"month": month, "year": year, "days": days, "rows": rows}
+
+
+@app.get("/attendance/people")
+async def get_attendance_people(
+    search: str | None = None,
+    page_size: int = 20,
+    admin: AdminUser = Depends(get_current_admin),
+):
+    """Search active PC, FS, LS, and LSS participants for manual entry."""
+    people, total = await list_attendance_people(
+        is_active=True, search=search, page_size=min(max(page_size, 1), 100)
+    )
+    return {"count": len(people), "total": total, "people": people}
+
+
+@app.patch("/attendance/override")
+async def patch_attendance_override(
+    request: AttendanceOverrideRequest,
+    admin: AdminUser = Depends(get_current_admin),
+):
+    """Audit and apply an administrator's monthly attendance-cell override."""
+    if not request.reason.strip():
+        raise HTTPException(status_code=422, detail="reason must not be empty")
+    try:
+        return await save_attendance_override(
+            request.employee_id,
+            request.date,
+            request.attendance_code,
+            request.reason,
+            admin.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/attendance")
@@ -560,9 +663,7 @@ async def export_attendance(
     admin: AdminUser = Depends(get_current_admin),
 ):
     """
-    Excel export — Coordinators sheet, Field People sheet, and one sheet
-    per PC with a day-by-day P/A/F/N-A grid (see attendance_grid.py for
-    marker meanings and the deactivation rule).
+    Excel export with monthly attendance tabs for PC, FS, LS, and LSS.
 
     Scope: EITHER month+year (e.g. ?month=9&year=2026) OR date_from+date_to
     (YYYY-MM-DD) — pass one pair, not both. Optionally narrow to one PC
@@ -585,9 +686,7 @@ async def export_attendance(
 
     days = daterange(date_from, date_to)
 
-    # Export needs EVERY matching record, not a paginated page — pass a
-    # large page_size explicitly so this doesn't silently truncate to the
-    # default 50 now that list_coordinators/list_employees are paginated.
+    # Export needs every participant, including PCs, not just employees.
     coordinators, _ = await list_coordinators(pc_id=pc_id, page_size=100_000)
     coordinators = [c.model_dump() for c in coordinators]
     employees, _ = await list_employees(pc_id=pc_id, page_size=100_000)
@@ -596,15 +695,23 @@ async def export_attendance(
     if pc_id is not None and not coordinators:
         raise HTTPException(status_code=404, detail=f"No coordinator found with pc_id: {pc_id}")
 
-    employee_ids = [e["employee_id"] for e in employees]
+    participants = employees + [
+        {
+            "employee_id": pc["pc_id"],
+            "is_active": pc.get("is_active", True),
+            "deactivated_at": pc.get("deactivated_at"),
+        }
+        for pc in coordinators
+    ]
+    employee_ids = [person["employee_id"] for person in participants]
     submissions_by_employee = await get_submissions_grouped(employee_ids, date_from, date_to)
 
     grids = {}
-    for emp in employees:
-        grids[emp["employee_id"]] = compute_employee_grid(
-            emp.get("is_active", True),
-            emp.get("deactivated_at"),
-            submissions_by_employee.get(emp["employee_id"], {}),
+    for person in participants:
+        grids[person["employee_id"]] = compute_employee_grid(
+            person.get("is_active", True),
+            person.get("deactivated_at"),
+            submissions_by_employee.get(person["employee_id"], {}),
             days,
         )
 

@@ -4,6 +4,10 @@ export interface Coordinator {
   phone_number?: string;
   is_active: boolean;
   deactivated_at: string | null;
+  assigned_site: AssignedSite | null;
+  shift_start: string | null;
+  shift_end: string | null;
+  shift_grace_minutes: number | null;
 }
 
 export interface PageMeta {
@@ -25,13 +29,36 @@ export interface Employee {
   name: string;
   is_active: boolean;
   deactivated_at: string | null;
+  role: AttendanceRole;
   pc_id: string | null;
+  parent_employee_id: string | null;
   area: string | null;
   designation: string | null;
   assigned_site: AssignedSite | null;
   shift_start: string | null;
   shift_end: string | null;
   shift_grace_minutes: number | null;
+}
+
+export type AttendanceRole = 'PC' | 'FS' | 'LS' | 'LSS';
+
+export interface AttendanceGridRow {
+  employee_id: string;
+  name: string;
+  role: AttendanceRole;
+  pc_id: string | null;
+  parent_employee_id: string | null;
+  area: string | null;
+  designation: string | null;
+  is_active: boolean;
+  attendance: Record<string, string>;
+}
+
+export interface AttendanceGrid {
+  month: number;
+  year: number;
+  days: string[];
+  rows: AttendanceGridRow[];
 }
 
 export type ShiftStatus =
@@ -51,6 +78,8 @@ export type EntryType = 'whatsapp' | 'manual' | 'system';
 export interface AttendanceRecord {
   _id: string;
   employee_id: string;
+  employee_name?: string | null;
+  person_role?: AttendanceRole | null;
   sender_phone: string | null;
   caption: string | null;
   media_url: string | null;

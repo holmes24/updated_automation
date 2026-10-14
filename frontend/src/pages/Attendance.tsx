@@ -7,6 +7,7 @@ import { ReviewStatusBadge, ShiftStatusBadge, FaceMatchStatus } from '../compone
 import { ResolveModal } from '../components/ResolveModal';
 import { ExportPanel } from '../components/ExportPanel';
 import { ManualEntryModal } from '../components/ManualEntryModal';
+import { MonthlyAttendanceGrid } from '../components/MonthlyAttendanceGrid';
 import { Trash2 } from 'lucide-react';
 
 const VERDICT_FILTERS: { label: string; value: Verdict | '' }[] = [
@@ -52,6 +53,7 @@ export function AttendancePage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
+  const [showMonthlyGrid, setShowMonthlyGrid] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,7 +107,7 @@ export function AttendancePage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   async function removeAttendance(record: AttendanceRecord) {
-    const employeeName = employeeMap[record.employee_id]?.name ?? record.employee_id;
+    const employeeName = employeeMap[record.employee_id]?.name ?? record.employee_name ?? record.employee_id;
     if (!window.confirm(`Permanently delete the attendance record for ${employeeName}?`)) return;
 
     setDeletingId(record._id);
@@ -124,6 +126,10 @@ export function AttendancePage() {
     }
   }
 
+  if (showMonthlyGrid) {
+    return <MonthlyAttendanceGrid onClose={() => setShowMonthlyGrid(false)} />;
+  }
+
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
@@ -136,6 +142,13 @@ export function AttendancePage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setShowMonthlyGrid(true)}
+            className="px-3 py-1.5 rounded-md text-sm font-medium border"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-ink-muted)' }}
+          >
+            Monthly grid
+          </button>
           <button
             onClick={() => setManualEntryOpen(true)}
             className="px-3 py-1.5 rounded-md text-sm font-medium text-white transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
@@ -255,7 +268,7 @@ export function AttendancePage() {
                 style={{ borderColor: 'var(--color-border-subtle)' }}
               >
                 <td className="px-4 py-2.5" style={{ color: 'var(--color-ink)' }}>
-                  <div className="font-medium">{employeeMap[r.employee_id]?.name ?? r.employee_id}</div>
+                  <div className="font-medium">{employeeMap[r.employee_id]?.name ?? r.employee_name ?? r.employee_id}</div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
                       {r.employee_id}
