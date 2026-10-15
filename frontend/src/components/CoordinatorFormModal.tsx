@@ -2,7 +2,6 @@ import { useState } from 'react';
 import axios from 'axios';
 import { createCoordinator, updateCoordinator } from '../api/coordinators';
 import type { Coordinator } from '../types';
-import { AssignedSiteMap, type SiteValue } from './AssignedSiteMap';
 
 const inputStyle = {
   background: 'var(--color-surface-sunken)',
@@ -22,11 +21,6 @@ export function CoordinatorFormModal({
   const [name, setName] = useState(coordinator?.name ?? '');
   const [phoneDigits, setPhoneDigits] = useState((coordinator?.phone_number ?? '').replace(/^91/, '').slice(0, 10));
   const [saving, setSaving] = useState(false);
-  const [site, setSite] = useState<SiteValue | undefined>(coordinator?.assigned_site ?? undefined);
-  const [geofenceRadiusKm, setGeofenceRadiusKm] = useState(coordinator?.geofence_radius_km ?? 5);
-  const [shiftStart, setShiftStart] = useState(coordinator?.shift_start ?? '');
-  const [shiftEnd, setShiftEnd] = useState(coordinator?.shift_end ?? '');
-  const [graceMinutes, setGraceMinutes] = useState(coordinator?.shift_grace_minutes?.toString() ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const phoneValid = phoneDigits.length === 10;
@@ -42,11 +36,6 @@ export function CoordinatorFormModal({
       const payload = {
         name,
         phone_number: `91${phoneDigits}`,
-        assigned_site: site ?? null,
-        geofence_radius_km: geofenceRadiusKm,
-        shift_start: shiftStart || null,
-        shift_end: shiftEnd || null,
-        shift_grace_minutes: graceMinutes ? Number(graceMinutes) : null,
       };
       if (coordinator) {
         await updateCoordinator(coordinator.pc_id, payload);
@@ -106,61 +95,13 @@ export function CoordinatorFormModal({
           />
         </div>
         <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)' }}>
-          Use a unique WhatsApp number for each participant so image attendance maps to the right person.
+          Project coordinators manage teams and do not submit attendance.
         </p>
         {phoneDigits.length > 0 && !phoneValid && (
           <p className="text-xs mt-1" style={{ color: 'var(--color-absent)' }}>
             Enter all 10 digits.
           </p>
         )}
-
-        <div className="grid grid-cols-2 gap-3 my-4">
-          <label className="block text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-            Shift start
-            <input
-              type="time"
-              value={shiftStart}
-              onChange={(e) => setShiftStart(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-md text-sm border"
-              style={inputStyle}
-            />
-          </label>
-          <label className="block text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-            Shift end
-            <input
-              type="time"
-              value={shiftEnd}
-              onChange={(e) => setShiftEnd(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-md text-sm border"
-              style={inputStyle}
-            />
-          </label>
-          <label className="block text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-            Grace period (minutes)
-            <input
-              type="number"
-              min="0"
-              value={graceMinutes}
-              onChange={(e) => setGraceMinutes(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-md text-sm border"
-              style={inputStyle}
-            />
-          </label>
-        </div>
-        <label className="block text-xs mb-1" style={{ color: 'var(--color-ink-muted)' }}>
-          Allowed distance from attendance site (km)
-          <input
-            type="number"
-            min="0.1"
-            step="0.1"
-            value={geofenceRadiusKm}
-            onChange={(e) => setGeofenceRadiusKm(Number(e.target.value))}
-            className="mt-1 w-full px-3 py-2 rounded-md text-sm border"
-            style={inputStyle}
-          />
-          <span className="block mt-1">Default: 5 km. A site and GPS location in the submitted image are required.</span>
-        </label>
-        <div className="mb-4"><AssignedSiteMap site={site} onChange={setSite} /></div>
 
         {error && (
           <p className="text-xs mb-3" style={{ color: 'var(--color-absent)' }}>
@@ -174,7 +115,7 @@ export function CoordinatorFormModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={!name.trim() || !phoneValid || !Number.isFinite(geofenceRadiusKm) || geofenceRadiusKm <= 0 || saving}
+            disabled={!name.trim() || !phoneValid || saving}
             className="px-3 py-1.5 rounded-md text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--color-accent)', color: 'white' }}
           >

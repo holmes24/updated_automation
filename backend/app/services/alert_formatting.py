@@ -25,6 +25,15 @@ def _format_one(issue: str) -> str:
     if match := re.match(r"date_mismatch_(.+)", issue):
         return f"Photo date mismatch (Photo taken on {match.group(1)}, not today)"
 
+    if match := re.match(r"exif_date_mismatch_(.+)", issue):
+        return f"Photo date differs from its camera metadata (metadata date: {match.group(1)})"
+
+    if match := re.match(r"possible_date_edit_near_duplicate_(.+)", issue):
+        return (
+            "Near-identical photo has a different overlay date than a previous "
+            f"submission (previous date: {match.group(1)}; possible date edit or photo reuse)"
+        )
+
     if match := re.match(r"geofence_fail_(\d+)m", issue):
         return f"Location mismatch — {match.group(1)}m from assigned site"
 
@@ -63,7 +72,11 @@ def flag_reason_from_issues(issues: list[str]) -> str | None:
         return None
 
     for issue in issues:
-        if issue.startswith("date_mismatch"):
+        if issue.startswith((
+            "date_mismatch",
+            "exif_date_mismatch",
+            "possible_date_edit_near_duplicate",
+        )):
             return "DATE"
 
     for issue in issues:

@@ -32,7 +32,7 @@ export function EmployeeFormModal({
   const [form, setForm] = useState<CreateEmployeePayload>({
     phone_number: employee?.phone_number ?? '',
     name: employee?.name ?? '',
-    role: employee?.role === 'PC' ? 'FS' : employee?.role ?? 'FS',
+    role: employee?.role ?? 'FS',
     pc_id: employee?.pc_id ?? undefined,
     parent_employee_id: employee?.parent_employee_id ?? undefined,
     area: employee?.area ?? undefined,
@@ -70,7 +70,7 @@ export function EmployeeFormModal({
   const hierarchyValid = form.role === 'LS'
     ? Boolean(selectedFieldSupervisor?.pc_id)
     : Boolean(form.pc_id);
-  function handleRoleChange(role: Exclude<AttendanceRole, 'PC'>) {
+  function handleRoleChange(role: AttendanceRole) {
     setForm((current) => ({
       ...current,
       role,

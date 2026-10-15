@@ -12,6 +12,7 @@ first) — which is always true here, since this fires in response to their
 own selfie submission.
 """
 import logging
+from typing import Any
 
 import httpx
 
@@ -78,17 +79,45 @@ async def send_text_reply(country_code: str, phone_number: str, message: str) ->
         return False
 
 
-def build_reply_message(verdict: str, roster_name: str | None, issues: list[str]) -> str:
+def build_reply_message(
+    verdict: str,
+    roster_name: str | None,
+    issues: list[str],
+    previous_flagged_attempts: list[dict[str, Any]] | None = None,
+) -> str:
     """
     Human-readable reply text for the employee — plain language, not
     internal issue codes (those are for the admin alert / DB record).
     """
     if verdict == "verified":
         name = roster_name or "there"
-        return f"✅ Attendance recorded, {name}. Thanks!"
-    else:
+        message = f"✅ Attendance recorded, {name}. Thanks!"
+        if previous_flagged_attempts:
+            message += " Your replacement photo was accepted."
+        return message
+    if "unregistered_phone_number" in issues or "employee_inactive" in issues:
         return (
-            "⚠️ Your submission was received but needs review — "
-            "it's been flagged for a supervisor to check. "
-            "You don't need to resend unless asked."
+            "⚠️ Attendance could not be recorded. Your phone is not linked to an active account."
         )
+    if "not_enrolled" in issues:
+        return (
+            "⚠️ Your attendance photo could not be verified. Reason: Face enrollment is incomplete."
+        )
+    if any(issue.startswith(("date_mismatch", "exif_date_mismatch", "possible_date_edit")) for issue in issues):
+        reason = "Photo date mismatch"
+    elif any("duplicate" in issue for issue in issues):
+        reason = "Duplicate or reused photo"
+    elif any("geofence" in issue or "photo_gps_missing" in issue for issue in issues):
+        reason = "Location mismatch or missing GPS"
+    elif any("face" in issue or "identity" in issue for issue in issues):
+        reason = "Face verification failed"
+    elif "overlay_extraction_incomplete" in issues:
+        reason = "Date, time, or location is missing or unclear"
+    elif any("liveness" in issue for issue in issues):
+        reason = "Photo verification check failed"
+    else:
+        reason = "Photo details need review"
+    return (
+        "⚠️ Your attendance photo could not be verified, so attendance is not confirmed. "
+        f"Reason: {reason}."
+    )

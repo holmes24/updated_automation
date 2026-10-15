@@ -1,7 +1,4 @@
-"""
-Create a formatted, date-wise attendance Excel workbook.
-Includes an 'Unassigned PC' sheet so unassigned employees are never omitted.
-"""
+"""Create a formatted, date-wise attendance Excel workbook."""
 
 from io import BytesIO
 
@@ -75,12 +72,6 @@ def build_export_workbook(
         {
             "employee_id": pc["pc_id"],
             "name": pc.get("name"),
-            "role": "PC",
-            "pc_id": pc["pc_id"],
-            "area": pc.get("area"),
-            "assigned_site": pc.get("assigned_site"),
-            "is_active": pc.get("is_active", True),
-            "deactivated_at": pc.get("deactivated_at"),
         }
         for pc in coordinators
     ] + employees
@@ -133,7 +124,6 @@ def build_export_workbook(
 
     # --- Department attendance worksheets ---
     roles = [
-        ("PC", "Project Co-Ordinators"),
         ("FS", "Field Supervisors"),
         ("LS", "Local supervisors"),
         ("LSS", "Local supervisor scanning"),
@@ -160,11 +150,10 @@ def build_export_workbook(
             markers = [_value(grid.get(day), NO_RESULT) for day in days]
             site = emp.get("assigned_site") or {}
             location = site.get("name") if isinstance(site, dict) else None
-            parent_id = emp.get("parent_employee_id") or (emp.get("pc_id") if role != "PC" else None)
+            parent_id = emp.get("parent_employee_id") or emp.get("pc_id")
             parent = person_by_id.get(str(parent_id)) if parent_id else None
             parent_label = f"{parent.get('name')} ({parent_id})" if parent else _value(parent_id, "—")
             position = emp.get("designation") or {
-                "PC": "Project Co-Ordinator",
                 "FS": "Field Supervisor",
                 "LS": "Local Supervisor",
                 "LSS": "Local Supervisor Scanning",

@@ -12,6 +12,7 @@ from app.db.mongodb import (
     create_notification,
     get_db,
     get_enrollment,
+    get_retryable_submission_today,
     has_submission_today,
     lookup_roster,
     normalize_phone,
@@ -26,7 +27,7 @@ from app.services.face_detect import detect_face
 from app.services.face_match import verify_identity
 from app.services.geofence import check_geofence
 from app.services.liveness import check_passive_liveness
-from app.services.ocr import extract_overlay_data
+from app.services.ocr import OverlayData, extract_overlay_data
 from app.services.shift_check import NON_FAILURE_STATUSES, check_shift_window
 from app.services.whatsapp_reply import build_reply_message
 
@@ -37,6 +38,39 @@ INDIA_TZ = ZoneInfo("Asia/Kolkata")
 def _get_today_ist() -> str:
     """Calendar date in Indian Standard Time (YYYY-MM-DD)."""
     return datetime.now(INDIA_TZ).strftime("%Y-%m-%d")
+
+
+def _exif_date_mismatch(overlay: OverlayData) -> str | None:
+    if overlay.timestamp is None or overlay.exif_timestamp is None:
+        return None
+
+    overlay_date = overlay.timestamp.astimezone(INDIA_TZ).date()
+    exif_date = overlay.exif_timestamp.date()
+    return exif_date.isoformat() if overlay_date != exif_date else None
+
+
+def _duplicate_date_issue(photo_date: str | None, past_submission: dict) -> str | None:
+    previous_photo_date = past_submission.get("photo_date")
+    if photo_date and previous_photo_date and photo_date != previous_photo_date:
+        return f"possible_date_edit_near_duplicate_{previous_photo_date}"
+    return None
+
+
+def _previous_attempt_history(retry_submission: dict | None) -> list[dict]:
+    if retry_submission is None:
+        return []
+
+    history = list(retry_submission.get("previous_flagged_attempts") or [])
+    history.append({
+        "submission_id": str(retry_submission["_id"]),
+        "event_id": retry_submission.get("event_id"),
+        "attendance_date": retry_submission.get("attendance_date"),
+        "photo_date": retry_submission.get("photo_date"),
+        "flag_reason": retry_submission.get("flag_reason"),
+        "issues": retry_submission.get("issues") or [],
+        "received_at_utc": retry_submission.get("received_at_utc"),
+    })
+    return history
 
 
 async def download_media(media_url: str) -> bytes:
@@ -72,7 +106,12 @@ async def queue_submission_notifications(
     verdict = submission.get("verdict")
     issues = submission.get("issues", [])
 
-    reply = build_reply_message(verdict, roster_name, issues)
+    reply = build_reply_message(
+        verdict,
+        roster_name,
+        issues,
+        submission.get("previous_flagged_attempts") or [],
+    )
     await _queue_notification({
         "notification_id": _notification_id(event_id, "employee_reply"),
         "event_id": event_id,
@@ -137,6 +176,23 @@ async def process_attendance_submission(
     roster_entry = await lookup_roster(sender_phone)
     if roster_entry is None:
         issues.append("unregistered_phone_number")
+    elif roster_entry.role == "PC":
+        logger.info(
+            "Ignoring attendance image from project coordinator %s event=%s",
+            roster_entry.employee_id,
+            event_id,
+        )
+        await _queue_notification({
+            "notification_id": _notification_id(event_id, "pc_attendance_info"),
+            "event_id": event_id,
+            "kind": "employee_reply",
+            "status": "pending",
+            "attempt": 0,
+            "country_code": payload.data.customer.country_code,
+            "phone_number": payload.data.customer.phone_number,
+            "message": "Attendance is not required for Project Co-Ordinators.",
+        })
+        return
 
     if roster_entry is not None and not roster_entry.is_active:
         if not media_url:
@@ -167,22 +223,33 @@ async def process_attendance_submission(
         await queue_submission_notifications(event_id, payload, submission)
         return
 
-    # Enforce exactly one submission attempt per day
+    retry_submission = None
+    previous_flagged_attempts: list[dict] = []
     if roster_entry is not None and await has_submission_today(
         roster_entry.employee_id, today_ist, include_system_absences=False
     ):
-        warning_job = {
-            "notification_id": _notification_id(event_id, "employee_duplicate_day"),
-            "event_id": event_id,
-            "kind": "employee_reply",
-            "status": "pending",
-            "attempt": 0,
-            "country_code": payload.data.customer.country_code,
-            "phone_number": payload.data.customer.phone_number,
-            "message": "⚠️ You've already submitted your attendance for today. If there's a problem with it, please contact your admin/supervisor.",
-        }
-        await _queue_notification(warning_job)
-        return
+        retry_submission = await get_retryable_submission_today(
+            roster_entry.employee_id, today_ist
+        )
+        if retry_submission is None:
+            warning_job = {
+                "notification_id": _notification_id(event_id, "employee_duplicate_day"),
+                "event_id": event_id,
+                "kind": "employee_reply",
+                "status": "pending",
+                "attempt": 0,
+                "country_code": payload.data.customer.country_code,
+                "phone_number": payload.data.customer.phone_number,
+                "message": "⚠️ You've already submitted your attendance for today. If there's a problem with it, please contact your admin/supervisor.",
+            }
+            await _queue_notification(warning_job)
+            return
+        logger.info(
+            "Accepting replacement photo from %s for pending submission %s",
+            sender_phone,
+            retry_submission.get("_id"),
+        )
+        previous_flagged_attempts = _previous_attempt_history(retry_submission)
 
     if not media_url:
         logger.error("No media_url in payload — cannot process image")
@@ -210,15 +277,30 @@ async def process_attendance_submission(
                 sender_phone, photo_date, today_ist,
             )
 
+    if exif_date := _exif_date_mismatch(overlay):
+        issues.append(f"exif_date_mismatch_{exif_date}")
+        logger.warning(
+            "Photo overlay/EXIF date mismatch for %s: overlay=%s EXIF=%s",
+            sender_phone,
+            photo_date,
+            exif_date,
+        )
+
     new_hash = compute_image_hash(image_bytes)
     if roster_entry:
-        past_submissions = db.submissions.find({"employee_id": roster_entry.employee_id})
+        past_submissions = db.submissions.find({
+            "employee_id": roster_entry.employee_id,
+            "attendance_date": {"$ne": today_ist},
+            "review_status": {"$ne": "superseded"},
+        })
         async for past in past_submissions:
             if not past.get("image_hash"):
                 continue
             dup, distance = is_duplicate(new_hash, past["image_hash"])
             if dup:
                 issues.append(f"duplicate_of_submission_{past['_id']}")
+                if date_issue := _duplicate_date_issue(photo_date, past):
+                    issues.append(date_issue)
                 break
 
     geofence_passed = None
@@ -272,7 +354,14 @@ async def process_attendance_submission(
 
     flag_reason = None
     if verdict == "flagged":
-        if any(i.startswith("date_mismatch") for i in issues):
+        if any(
+            i.startswith((
+                "date_mismatch",
+                "exif_date_mismatch",
+                "possible_date_edit_near_duplicate",
+            ))
+            for i in issues
+        ):
             flag_reason = "DATE"
         elif any("geofence" in i for i in issues):
             flag_reason = "LOCATION"
@@ -325,6 +414,8 @@ async def process_attendance_submission(
         "entry_type": "whatsapp",
         "received_at_utc": msg.received_at_utc,
     }
+    if previous_flagged_attempts:
+        submission["previous_flagged_attempts"] = previous_flagged_attempts
 
     try:
         await db.submissions.insert_one(submission)
@@ -334,6 +425,20 @@ async def process_attendance_submission(
         submission = await db.submissions.find_one({"event_id": event_id})
         if not submission:
             raise
+    if retry_submission is not None:
+        await db.submissions.update_one(
+            {
+                "_id": retry_submission["_id"],
+                "verdict": "flagged",
+                "review_status": "pending",
+            },
+            {
+                "$set": {
+                    "review_status": "superseded",
+                    "superseded_by_event_id": event_id,
+                }
+            },
+        )
     if roster_entry is not None:
         await delete_system_absences_today(roster_entry.employee_id, today_ist)
 

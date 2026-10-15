@@ -362,8 +362,8 @@ async def delete_coordinator(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Cannot delete coordinator {pc_id}: {linked_supervisors} roster, "
-                "attendance, or override record(s) are linked."
+                f"Cannot delete coordinator {pc_id}: {linked_supervisors} roster "
+                "participant(s) are assigned to this coordinator. Reassign them first."
             ),
         )
     return {"status": "deleted"}
@@ -447,18 +447,21 @@ async def patch_employee(
 async def delete_employee(
     employee_id: str, admin: AdminUser = Depends(get_current_admin)
 ):
-    """Permanently delete a participant only when no history or child links exist."""
-    attendance_count = await delete_employee_without_attendance(employee_id)
-    if attendance_count is None:
+    """Delete a participant with no current attendance entries or child links."""
+    linked_records = await delete_employee_without_attendance(employee_id)
+    if linked_records is None:
         raise HTTPException(
             status_code=404, detail=f"No employee found with employee_id: {employee_id}"
         )
-    if attendance_count:
+    attendance_count, override_count, child_count = linked_records
+    if attendance_count or override_count or child_count:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Cannot delete participant {employee_id}: {attendance_count} "
-                "attendance record(s) or child assignment(s) exist."
+                f"Cannot delete participant {employee_id}: {attendance_count} current "
+                f"attendance record(s), {override_count} attendance override(s), and "
+                f"{child_count} child assignment(s) remain. Superseded attempt history "
+                "is retained and does not block deletion."
             ),
         )
     return {"status": "deleted"}
@@ -501,7 +504,7 @@ async def get_attendance_grid(
     role: Literal["PC", "FS", "LS", "LSS"] | None = None,
     admin: AdminUser = Depends(get_current_user),
 ):
-    """Return monthly attendance for PC, FS, LS, and LSS participants."""
+    """Return monthly attendance for FS, LS, and LSS participants."""
     import calendar
 
     if month < 1 or month > 12:
@@ -549,7 +552,7 @@ async def get_attendance_people(
     page_size: int = 20,
     admin: AdminUser = Depends(get_current_admin),
 ):
-    """Search active PC, FS, LS, and LSS participants for manual entry."""
+    """Search active FS, LS, and LSS participants for manual entry."""
     people, total = await list_attendance_people(
         is_active=True, search=search, page_size=min(max(page_size, 1), 100)
     )
@@ -611,6 +614,8 @@ async def get_attendance(
     for record in records:
         issues = record.get("issues") or []
         record["issues_display"] = format_issue_list(issues)
+        for attempt in record.get("previous_flagged_attempts") or []:
+            attempt["issues_display"] = format_issue_list(attempt.get("issues") or [])
         record["flag_reason"] = flag_reason_from_issues(issues) if record.get("verdict") == "flagged" else None
         photo_ts = record.get("photo_timestamp") or (record.get("overlay") or {}).get("timestamp")
         if photo_ts:
@@ -751,7 +756,7 @@ async def export_attendance(
     admin: AdminUser = Depends(get_current_admin),
 ):
     """
-    Excel export with monthly attendance tabs for PC, FS, LS, and LSS.
+    Excel export with monthly attendance tabs for FS, LS, and LSS.
 
     Scope: EITHER month+year (e.g. ?month=9&year=2026) OR date_from+date_to
     (YYYY-MM-DD) — pass one pair, not both. Optionally narrow to one PC
@@ -774,7 +779,7 @@ async def export_attendance(
 
     days = daterange(date_from, date_to)
 
-    # Export needs every participant, including PCs, not just employees.
+    # Keep coordinator names for employee hierarchy labels; PCs are not attendance participants.
     coordinators, _ = await list_coordinators(pc_id=pc_id, page_size=100_000)
     coordinators = [c.model_dump() for c in coordinators]
     employees, _ = await list_employees(pc_id=pc_id, page_size=100_000)
@@ -783,14 +788,7 @@ async def export_attendance(
     if pc_id is not None and not coordinators:
         raise HTTPException(status_code=404, detail=f"No coordinator found with pc_id: {pc_id}")
 
-    participants = employees + [
-        {
-            "employee_id": pc["pc_id"],
-            "is_active": pc.get("is_active", True),
-            "deactivated_at": pc.get("deactivated_at"),
-        }
-        for pc in coordinators
-    ]
+    participants = employees
     employee_ids = [person["employee_id"] for person in participants]
     submissions_by_employee = await get_submissions_grouped(employee_ids, date_from, date_to)
 
@@ -844,6 +842,11 @@ async def enroll_face(
         raise HTTPException(
             status_code=404,
             detail=f"No roster entry found for employee_id: {employee_id}",
+        )
+    if roster_entry.role == "PC":
+        raise HTTPException(
+            status_code=422,
+            detail="Project coordinators are not attendance participants",
         )
 
     image_bytes_list = [await photo.read() for photo in photos]

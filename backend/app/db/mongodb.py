@@ -59,33 +59,18 @@ class Coordinator(BaseModel):
     phone_number: str | None = None
     is_active: bool = True
     deactivated_at: str | None = None
-    assigned_site: AssignedSite | None = None
-    geofence_radius_km: float = Field(default=5.0, gt=0, allow_inf_nan=False)
-    shift_start: str | None = None
-    shift_end: str | None = None
-    shift_grace_minutes: int | None = None
     role: Literal["PC"] = "PC"
 
 
 class CoordinatorRegistrationRequest(BaseModel):
     name: str
     phone_number: str | None = None
-    assigned_site: AssignedSite | None = None
-    geofence_radius_km: float = Field(default=5.0, gt=0, allow_inf_nan=False)
-    shift_start: str | None = None
-    shift_end: str | None = None
-    shift_grace_minutes: int | None = None
 
 
 class CoordinatorUpdateRequest(BaseModel):
     name: str | None = None
     phone_number: str | None = None
     is_active: bool | None = None
-    assigned_site: AssignedSite | None = None
-    geofence_radius_km: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    shift_start: str | None = None
-    shift_end: str | None = None
-    shift_grace_minutes: int | None = None
 
 
 class RosterEntry(BaseModel):
@@ -198,11 +183,6 @@ async def lookup_roster(phone_number: str) -> RosterEntry | None:
                 deactivated_at=doc.get("deactivated_at"),
                 role="PC",
                 pc_id=doc["pc_id"],
-                assigned_site=doc.get("assigned_site"),
-                geofence_radius_km=doc.get("geofence_radius_km", 5.0),
-                shift_start=doc.get("shift_start"),
-                shift_end=doc.get("shift_end"),
-                shift_grace_minutes=doc.get("shift_grace_minutes"),
             )
         logger.warning("No roster entry found for phone number: %s", normalized)
         return None
@@ -224,11 +204,6 @@ async def get_roster_by_employee_id(employee_id: str) -> RosterEntry | None:
             deactivated_at=pc.get("deactivated_at"),
             role="PC",
             pc_id=pc["pc_id"],
-            assigned_site=pc.get("assigned_site"),
-            geofence_radius_km=pc.get("geofence_radius_km", 5.0),
-            shift_start=pc.get("shift_start"),
-            shift_end=pc.get("shift_end"),
-            shift_grace_minutes=pc.get("shift_grace_minutes"),
         )
     return RosterEntry(**doc)
 
@@ -275,11 +250,6 @@ async def register_coordinator(request: CoordinatorRegistrationRequest) -> Coord
         "name": request.name,
         "phone_number": request.phone_number,
         "is_active": True,
-        "assigned_site": request.assigned_site.model_dump() if request.assigned_site else None,
-        "geofence_radius_km": request.geofence_radius_km,
-        "shift_start": request.shift_start,
-        "shift_end": request.shift_end,
-        "shift_grace_minutes": request.shift_grace_minutes,
     }
     await db.coordinators.insert_one(doc)
     return Coordinator(**doc)
@@ -324,8 +294,6 @@ async def update_coordinator(
 ) -> Coordinator | None:
     db = get_db()
     set_fields = updates.model_dump(exclude_unset=True)
-    if isinstance(set_fields.get("assigned_site"), AssignedSite):
-        set_fields["assigned_site"] = set_fields["assigned_site"].model_dump()
 
     current = await get_coordinator_by_id(pc_id) if "phone_number" in set_fields else None
     if (
@@ -359,15 +327,16 @@ async def update_coordinator(
 
 
 async def delete_coordinator_if_unassigned(pc_id: str) -> int | None:
-    """Delete a coordinator only when no roster entries reference it.
+    """Delete a coordinator only when no roster entries are assigned to it.
 
-    Returns the number of linked supervisors, or None if the coordinator
-    does not exist.
+    Historical attendance records are retained for audit and do not block
+    removing a coordinator profile, since coordinators are not participants.
+    Returns the number of linked roster entries, or None if not found.
     """
     db = get_db()
+    if await db.coordinators.find_one({"pc_id": pc_id}, {"_id": 1}) is None:
+        return None
     linked_supervisors = await db.roster.count_documents({"pc_id": pc_id})
-    linked_supervisors += await db.submissions.count_documents({"employee_id": pc_id})
-    linked_supervisors += await db.attendance_overrides.count_documents({"employee_id": pc_id})
     if linked_supervisors:
         return linked_supervisors
 
@@ -519,28 +488,38 @@ async def update_employee_details(
     return RosterEntry(**doc)
 
 
-async def delete_employee_without_attendance(employee_id: str) -> int | None:
-    """Delete a supervisor only when no attendance submissions reference them.
+async def delete_employee_without_attendance(
+    employee_id: str,
+) -> tuple[int, int, int] | None:
+    """Delete a participant only when no current attendance or child links exist.
 
-    Returns the number of attendance records, or None if the supervisor does
-    not exist.
+    Superseded submissions are kept as audit history and do not block deletion.
+    Returns counts of current attendance, overrides and child assignments, or
+    None if the participant does not exist.
     """
     db = get_db()
     if await db.roster.find_one({"employee_id": employee_id}, {"_id": 1}) is None:
         return None
 
-    attendance_count = await db.submissions.count_documents({"employee_id": employee_id})
-    attendance_count += await db.roster.count_documents({"parent_employee_id": employee_id})
-    attendance_count += await db.attendance_overrides.count_documents({"employee_id": employee_id})
-    if attendance_count:
-        return attendance_count
+    attendance_count = await db.submissions.count_documents({
+        "employee_id": employee_id,
+        "review_status": {"$ne": "superseded"},
+    })
+    override_count = await db.attendance_overrides.count_documents(
+        {"employee_id": employee_id}
+    )
+    child_count = await db.roster.count_documents(
+        {"parent_employee_id": employee_id}
+    )
+    if attendance_count or override_count or child_count:
+        return attendance_count, override_count, child_count
 
     result = await db.roster.delete_one({"employee_id": employee_id})
     if result.deleted_count != 1:
         return None
 
     await db.face_embeddings.delete_one({"employee_id": employee_id})
-    return 0
+    return 0, 0, 0
 
 
 async def save_enrollment(employee_id: str, embeddings: list[list[float]]) -> None:
@@ -576,39 +555,18 @@ async def list_attendance_people(
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[RosterEntry], int]:
+    if role == "PC":
+        return [], 0
+
     employees, employee_total = await list_employees(
         pc_id=pc_id, role=role, is_active=is_active, search=search,
         page=1, page_size=100_000
     )
-    coordinators: list[RosterEntry] = []
-    coordinator_total = 0
-    if role in (None, "PC"):
-        pcs, coordinator_total = await list_coordinators(
-            pc_id=pc_id, is_active=is_active, search=search,
-            page=1, page_size=100_000
-        )
-        coordinators = [
-            RosterEntry(
-                employee_id=pc.pc_id,
-                phone_number=pc.phone_number or "",
-                name=pc.name,
-                is_active=pc.is_active,
-                deactivated_at=pc.deactivated_at,
-                role="PC",
-                pc_id=pc.pc_id,
-                assigned_site=pc.assigned_site,
-                geofence_radius_km=pc.geofence_radius_km,
-                shift_start=pc.shift_start,
-                shift_end=pc.shift_end,
-                shift_grace_minutes=pc.shift_grace_minutes,
-            )
-            for pc in pcs
-        ]
-    people = coordinators + employees
+    employees = [person for person in employees if person.role != "PC"]
+    people = employees
     people.sort(key=lambda person: person.name.casefold())
-    total = employee_total + coordinator_total
     start = (page - 1) * page_size
-    return people[start:start + page_size], total
+    return people[start:start + page_size], len(people)
 
 
 async def list_employees(
@@ -669,7 +627,16 @@ async def list_attendance(
     page_size: int = 50,
 ) -> tuple[list[dict], int]:
     db = get_db()
-    query: dict = {}
+    query: dict = {
+        "review_status": {"$ne": "superseded"},
+        "person_role": {"$ne": "PC"},
+    }
+    coordinator_ids = [
+        coordinator.pc_id
+        for coordinator in (await list_coordinators(page_size=100_000))[0]
+    ]
+    if coordinator_ids:
+        query["$nor"] = [{"employee_id": {"$in": coordinator_ids}}]
 
     if employee_id is not None:
         query["employee_id"] = employee_id
@@ -748,13 +715,13 @@ async def has_submission_today(
     employee_id: str, date_str: str, *, include_system_absences: bool = True
 ) -> bool:
     """Checks whether this employee already has an attendance record for the date."""
+    db = get_db()
     norm_date = normalize_date_str(date_str)
     parts = norm_date.split("-")
     alt_date = f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else norm_date
-
-    db = get_db()
     query = {
         "employee_id": employee_id,
+        "review_status": {"$ne": "superseded"},
         "$or": [
             {"attendance_date": norm_date},
             {"received_at_utc": {"$regex": f"^{norm_date}"}},
@@ -772,6 +739,44 @@ async def has_submission_today(
         {"employee_id": employee_id, "attendance_date": norm_date},
         {"_id": 1},
     ) is not None
+
+
+async def get_retryable_submission_today(
+    employee_id: str, date_str: str
+) -> dict | None:
+    """Returns the latest unresolved flagged WhatsApp attempt, if it can be retried."""
+    norm_date = normalize_date_str(date_str)
+    parts = norm_date.split("-")
+    alt_date = f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else norm_date
+
+    db = get_db()
+    if await db.attendance_overrides.find_one(
+        {"employee_id": employee_id, "attendance_date": norm_date},
+        {"_id": 1},
+    ):
+        return None
+
+    submission = await db.submissions.find_one(
+        {
+            "employee_id": employee_id,
+            "review_status": {"$ne": "superseded"},
+            "$nor": [{"entry_type": "system", "attendance_status": "absent"}],
+            "$or": [
+                {"attendance_date": norm_date},
+                {"received_at_utc": {"$regex": f"^{norm_date}"}},
+                {"received_at_utc": {"$regex": f"^{alt_date}"}},
+            ],
+        },
+        sort=[("received_at_utc", -1), ("_id", -1)],
+    )
+    if (
+        submission
+        and submission.get("entry_type") == "whatsapp"
+        and submission.get("verdict") == "flagged"
+        and submission.get("review_status") == "pending"
+    ):
+        return submission
+    return None
 
 
 async def delete_system_absences_today(employee_id: str, date_str: str) -> None:
@@ -902,6 +907,8 @@ async def create_manual_attendance(
     roster_entry = await get_roster_by_employee_id(employee_id)
     if roster_entry is None:
         raise ValueError(f"No employee found with employee_id: {employee_id}")
+    if roster_entry.role == "PC":
+        raise ValueError("Project coordinators are not attendance participants")
 
     norm_date = normalize_date_str(date)
     if await has_submission_today(
@@ -957,6 +964,8 @@ async def save_attendance_override(
     person = await get_roster_by_employee_id(employee_id)
     if person is None:
         raise ValueError(f"No attendance participant found with ID: {employee_id}")
+    if person.role == "PC":
+        raise ValueError("Project coordinators are not attendance participants")
 
     norm_date = normalize_date_str(attendance_date)
     now = datetime.now(timezone.utc).isoformat()

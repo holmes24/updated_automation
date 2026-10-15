@@ -7,7 +7,6 @@ import type { AttendanceGridRow, AttendanceRole, Coordinator, Employee } from '.
 
 const ROLE_OPTIONS: { label: string; value: AttendanceRole | '' }[] = [
   { label: 'All groups', value: '' },
-  { label: 'Project Co-Ordinators (PC)', value: 'PC' },
   { label: 'Field Supervisors (FS)', value: 'FS' },
   { label: 'Local Supervisors (LS)', value: 'LS' },
   { label: 'Local Supervisor Scanning (LSS)', value: 'LSS' },

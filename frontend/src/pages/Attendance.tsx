@@ -341,7 +341,18 @@ export function AttendancePage() {
                   )}
                 </td>
                 <td className="px-4 py-2.5">
-                  {r.review_display ?? (r.verdict === 'verified' ? 'Automatically verified' : <ReviewStatusBadge status={r.review_status} />)}
+                  <div>{r.review_display ?? (r.verdict === 'verified' ? 'Automatically verified' : <ReviewStatusBadge status={r.review_status} />)}</div>
+                  {!!r.previous_flagged_attempts?.length && (
+                    <div
+                      className="mt-1 text-[10px]"
+                      style={{ color: 'var(--color-ink-faint)' }}
+                      title={r.previous_flagged_attempts
+                        .map((attempt) => attempt.issues_display?.join('; ') || attempt.issues.join('; '))
+                        .join('\n')}
+                    >
+                      Replaced {r.previous_flagged_attempts.length} flagged photo{r.previous_flagged_attempts.length === 1 ? '' : 's'}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 text-right">
                   {canManage && r.verdict === 'flagged' && r.review_status === 'pending' && (

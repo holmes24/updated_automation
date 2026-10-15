@@ -45,10 +45,17 @@ An approved flagged submission counts as P/L; a rejected flagged submission coun
 
 ## Attendance groups and monthly review
 
-Attendance participants are organized into four groups: Project Co-Ordinators (PC),
-Field Supervisors (FS), Local Supervisors (LS), and Local Supervisor Scanning (LSS).
-FS and LSS report to a PC; LS reports to an FS and inherits that FS's PC. PCs need
-an assigned attendance site and shift, and face enrollment is available for every group.
+Attendance is tracked only for Field Supervisors (FS), Local Supervisors (LS), and
+Local Supervisor Scanning (LSS). Project Co-Ordinators (PCs) remain available as
+team profiles and assignment parents: FS and LSS report to a PC, while LS reports
+to an FS and inherits that FS's PC. PCs do not submit attendance, have attendance
+locations or shifts, receive absence records, or require face enrollment. If a PC
+sends an attendance image, the system replies that attendance is not required and
+does not process or store it as an attendance submission.
+Participant deletion is blocked only by current attendance entries, overrides, or
+child assignments; superseded image attempts remain as audit history and do not
+prevent deletion. Coordinator profiles can be deleted once their roster participants
+are reassigned; historical PC absence entries are retained but do not block deletion.
 Legacy roster entries without a stored department retain the compatible FS default;
 review and reassign these entries in Attendance Participants before relying on historical
 department totals.
@@ -61,15 +68,13 @@ available for audit.
 
 ## Fraud and evidence checks
 
-Each image submission is independently analyzed, even if another submission already exists for the same employee/day. Evidence includes:
+Each initial image submission is analyzed. If a same-day submission is flagged and awaiting review, the employee can send a replacement; the earlier attempt remains stored as superseded audit data and its flag reason is linked to the replacement attendance record and confirmation reply. A verified submission or manual attendance override prevents another same-day attendance submission. Evidence includes:
 
-- server/WhatsApp `received_at_utc` as authoritative attendance time
-- OCR-visible date/time comparison against received date
-- EXIF date as supporting evidence only
-- SHA-256 exact-image hash
-- source and normalized pHash
-- previous submission reference and similarity/distance
-- possible date/time-edit signal when a near-identical previous image has conflicting overlay dates
+- attendance date based on the processing day; server/WhatsApp `received_at_utc` retained for audit
+- OCR-visible photo date comparison against the processing date
+- EXIF date cross-check against the OCR-visible date, when metadata is available
+- perceptual image hash compared with earlier submissions to detect likely photo reuse
+- possible date-edit signal when a near-identical previous image has a conflicting overlay date
 - face presence/count and enrolled-identity verification
 - assigned-site geofence
 - per-person assigned-site radius, configurable in kilometers (5 km default)
@@ -78,6 +83,7 @@ Each image submission is independently analyzed, even if another submission alre
 - human-readable fraud flags
 
 A still image cannot prove hardware-backed real-time liveness; suspicious passive signals are therefore review flags, not a liveness guarantee.
+EXIF and visible overlay data can both be manipulated or removed, so date cross-checks are review signals rather than proof of authenticity.
 
 ## Prerequisites on Windows
 
@@ -186,6 +192,16 @@ The supplied `deploy/docker-compose.production.yml` starts backend, one or more 
 
 For local HTTP testing, run `docker compose --env-file backend/.env -f deploy/docker-compose.production.yml -f deploy/docker-compose.local.yml up --build -d`. Open `http://localhost:8080`; MongoDB is available to Compass at `mongodb://localhost:27018`.
 
+To receive Interakt webhooks during local testing, keep a public HTTPS tunnel running in a separate terminal and point Interakt at its exact webhook URL:
+
+```powershell
+ngrok http --url=https://YOUR-RESERVED-NGROK-DOMAIN.ngrok-free.dev 8080
+```
+
+Configure Interakt to POST to `https://YOUR-RESERVED-NGROK-DOMAIN.ngrok-free.dev/webhook/interakt`. Keep Docker and ngrok running; if either stops, the local app cannot receive messages. Check `https://YOUR-RESERVED-NGROK-DOMAIN.ngrok-free.dev/api/health` for `{"status":"ok","redis":true,"mongodb":true}` before sending a test. The webhook accepts signed POST requests only, so opening `/webhook/interakt` in a browser and seeing `405 Method Not Allowed` is expected. Use the same `INTERAKT_WEBHOOK_SECRET` in Interakt and `backend/.env`.
+
+For team or production testing, use a stable HTTPS host whose webhook URL is configured in Interakt and whose backend, Redis, MongoDB, and workers are running. Do not use a developer's temporary tunnel as the production webhook; a free tunnel may be offline or change when that developer stops it.
+
 ### CMS account setup and access roles
 
 Create the initial bootstrap account from the running backend container:
@@ -217,16 +233,18 @@ The React Attendance page shows P/L/F/A/N/A status for returned submission recor
 3. Wrong person -> **F**
 4. Wrong GPS -> **F**
 5. Previous-day photo -> **F**
-6. Exact same image again -> first result retained; second submission **F** and audited
+6. Exact same image from a different attendance day -> **F** and audited as possible reuse
 7. Resized/recompressed near-duplicate -> **F** when pHash remains within threshold
 8. Current-looking edited date over an old near-identical photo -> **F / possible_date_edit** when evidence supports it
-9. Blurry photo -> **F**
-10. No face -> **F**
-11. Multiple faces -> **F**
-12. Suspicious passive liveness/image characteristics -> **F**
-13. No submission on a past day -> **A** in the export grid
-14. Inactive employee -> **N/A**
-15. Admin approval of F -> P/L; rejection -> A
+9. Flagged pending photo followed by a new same-day image -> replacement is analyzed; prior attempt is retained as superseded
+10. Verified attendance followed by another same-day image -> second attendance is blocked
+11. Blurry photo -> **F**
+12. No face -> **F**
+13. Multiple faces -> **F**
+14. Suspicious passive liveness/image characteristics -> **F**
+15. No submission on a past day -> **A** in the export grid
+16. Inactive employee -> **N/A**
+17. Admin approval of F -> P/L; rejection -> A
 
 ## Troubleshooting
 

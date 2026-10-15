@@ -4,11 +4,6 @@ export interface Coordinator {
   phone_number?: string;
   is_active: boolean;
   deactivated_at: string | null;
-  assigned_site: AssignedSite | null;
-  geofence_radius_km: number;
-  shift_start: string | null;
-  shift_end: string | null;
-  shift_grace_minutes: number | null;
 }
 
 export interface PageMeta {
@@ -42,7 +37,7 @@ export interface Employee {
   shift_grace_minutes: number | null;
 }
 
-export type AttendanceRole = 'PC' | 'FS' | 'LS' | 'LSS';
+export type AttendanceRole = 'FS' | 'LS' | 'LSS';
 
 export interface AttendanceGridRow {
   employee_id: string;
@@ -108,6 +103,16 @@ export interface AttendanceRecord {
   review_status: ReviewStatus;
   issues: string[];
   issues_display: string[];
+  previous_flagged_attempts?: {
+    submission_id: string;
+    event_id?: string | null;
+    attendance_date?: string | null;
+    photo_date?: string | null;
+    flag_reason?: string | null;
+    issues: string[];
+    issues_display?: string[];
+    received_at_utc?: string | null;
+  }[];
   entry_type: EntryType;
   created_by: string | null;
   reason: string | null;
