@@ -41,12 +41,11 @@ def decode_access_token(token: str) -> str:
     return payload["sub"]
 
 
-async def get_current_admin(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
 ) -> AdminUser:
     """
-    FastAPI dependency — add `admin: AdminUser = Depends(get_current_admin)`
-    to any endpoint that needs to require a logged-in CMS user.
+    Require an active authenticated CMS account, regardless of its role.
     """
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -62,6 +61,18 @@ async def get_current_admin(
     if admin is None or not admin.is_active:
         raise unauthorized
     return admin
+
+
+async def get_current_admin(
+    user: AdminUser = Depends(get_current_user),
+) -> AdminUser:
+    """Require a manual-team or bootstrap super-admin account."""
+    if user.role not in {"manual_team", "super_admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manual-team access required",
+        )
+    return user
 
 
 async def verify_api_key(x_api_key: str = Header(default=None)) -> None:

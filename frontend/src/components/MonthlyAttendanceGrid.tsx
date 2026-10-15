@@ -27,7 +27,7 @@ const CODE_LABELS: Record<string, string> = {
   '—': 'No result',
 };
 
-export function MonthlyAttendanceGrid({ onClose }: { onClose: () => void }) {
+export function MonthlyAttendanceGrid({ onClose, canManage }: { onClose: () => void; canManage: boolean }) {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
@@ -249,7 +249,7 @@ export function MonthlyAttendanceGrid({ onClose }: { onClose: () => void }) {
                   const marker = row.attendance[date] ?? '—';
                   return (
                     <td key={date} className="px-1 py-1 text-center">
-                      <button
+                      {canManage ? <button
                         type="button"
                         onClick={() => openCell(row, date)}
                         title={`${date}: ${CODE_LABELS[marker] ?? marker}. Click to edit.`}
@@ -261,7 +261,14 @@ export function MonthlyAttendanceGrid({ onClose }: { onClose: () => void }) {
                         }}
                       >
                         {marker}
-                      </button>
+                      </button> : <span
+                        title={`${date}: ${CODE_LABELS[marker] ?? marker}`}
+                        className="inline-block min-w-9 rounded px-1.5 py-1 text-xs font-medium"
+                        style={{
+                          color: ['F', 'A', 'AL'].includes(marker) ? 'var(--color-absent)' : 'var(--color-ink)',
+                          background: ['F', 'A', 'AL'].includes(marker) ? 'var(--color-absent-bg)' : 'var(--color-surface-sunken)',
+                        }}
+                      >{marker}</span>}
                     </td>
                   );
                 })}
@@ -275,7 +282,7 @@ export function MonthlyAttendanceGrid({ onClose }: { onClose: () => void }) {
         {loading && <p className="p-4 text-sm" style={{ color: 'var(--color-ink-muted)' }}>Loading monthly attendance…</p>}
       </div>
 
-      {editing && (
+      {canManage && editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-md rounded-lg border p-5 shadow-xl" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface-raised)' }}>
             <h2 className="text-base font-medium mb-1" style={{ color: 'var(--color-ink)' }}>Edit attendance</h2>

@@ -1,5 +1,6 @@
 import axios from 'axios';
-import type { LoginResponse } from '../types';
+import { apiClient } from './client';
+import type { AccountRole, LoginResponse, UserAccount } from '../types';
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
@@ -14,5 +15,24 @@ export async function login(username: string, password: string): Promise<LoginRe
     { username, password },
     { headers: { 'X-API-Key': SHARED_API_KEY } }
   );
+  return data;
+}
+
+export async function getCurrentUser(): Promise<Pick<UserAccount, 'username' | 'role'>> {
+  const { data } = await apiClient.get<Pick<UserAccount, 'username' | 'role'>>('/auth/me');
+  return data;
+}
+
+export async function listUsers(): Promise<UserAccount[]> {
+  const { data } = await apiClient.get<{ users: UserAccount[] }>('/auth/users');
+  return data.users;
+}
+
+export async function registerUser(payload: {
+  username: string;
+  password: string;
+  role: Extract<AccountRole, 'manual_team' | 'viewer'>;
+}): Promise<UserAccount> {
+  const { data } = await apiClient.post<UserAccount>('/auth/users', payload);
   return data;
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { CalendarCheck, Users, Share2, PanelLeftClose, PanelLeftOpen, LogOut } from 'lucide-react';
+import { CalendarCheck, Users, Share2, PanelLeftClose, PanelLeftOpen, LogOut, UserRoundCog } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const NAV_ITEMS = [
@@ -10,7 +10,10 @@ const NAV_ITEMS = [
 ];
 
 export function Layout() {
-  const { logout } = useAuth();
+  const { logout, canManage } = useAuth();
+  const navItems = canManage
+    ? [...NAV_ITEMS, { to: '/users', label: 'User access', icon: UserRoundCog }]
+    : NAV_ITEMS;
   // "pinned" is the toggle-button state (persists until clicked again).
   // "hovered" is a temporary expand-on-hover while collapsed — mirrors the
   // request for hover-to-open + a manual open/close control, without one
@@ -87,7 +90,7 @@ export function Layout() {
           )}
 
           <nav className="flex-1 px-3 space-y-0.5">
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               return (
                 <NavLink

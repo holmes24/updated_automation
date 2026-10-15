@@ -9,6 +9,7 @@ import { ExportPanel } from '../components/ExportPanel';
 import { ManualEntryModal } from '../components/ManualEntryModal';
 import { MonthlyAttendanceGrid } from '../components/MonthlyAttendanceGrid';
 import { Trash2 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const VERDICT_FILTERS: { label: string; value: Verdict | '' }[] = [
   { label: 'All', value: '' },
@@ -35,6 +36,7 @@ const istDateTime = (value?: string | null) => value
   : 'Not available';
 
 export function AttendancePage() {
+  const { canManage } = useAuth();
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -127,7 +129,7 @@ export function AttendancePage() {
   }
 
   if (showMonthlyGrid) {
-    return <MonthlyAttendanceGrid onClose={() => setShowMonthlyGrid(false)} />;
+    return <MonthlyAttendanceGrid onClose={() => setShowMonthlyGrid(false)} canManage={canManage} />;
   }
 
   return (
@@ -149,19 +151,23 @@ export function AttendancePage() {
           >
             Monthly grid
           </button>
-          <button
-            onClick={() => setManualEntryOpen(true)}
-            className="px-3 py-1.5 rounded-md text-sm font-medium text-white transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
-          >
-            Log manual entry
-          </button>
-                    <button
-            onClick={() => setExportOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-white transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
-          >
-            <img src="/brand/excel-icon.png" alt="" className="h-4 w-4" />
-            Export to Excel
-          </button>
+          {canManage && (
+            <>
+              <button
+                onClick={() => setManualEntryOpen(true)}
+                className="px-3 py-1.5 rounded-md text-sm font-medium text-white transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
+              >
+                Log manual entry
+              </button>
+              <button
+                onClick={() => setExportOpen(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-white transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"
+              >
+                <img src="/brand/excel-icon.png" alt="" className="h-4 w-4" />
+                Export to Excel
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -247,7 +253,7 @@ export function AttendancePage() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: 'var(--color-surface-sunken)' }}>
-              {['Employee', 'Received (IST)', 'Check-in (IST)', 'Status', 'Shift', 'Geofence', 'Face match', 'Flag', 'Review', 'Action'].map(
+              {['Employee', 'Received (IST)', 'Check-in (IST)', 'Status', 'Shift', 'Geofence', 'Face match', 'Flag', 'Review', ...(canManage ? ['Action'] : [])].map(
                 (h) => (
                   <th
                     key={h}
@@ -338,7 +344,7 @@ export function AttendancePage() {
                   {r.review_display ?? (r.verdict === 'verified' ? 'Automatically verified' : <ReviewStatusBadge status={r.review_status} />)}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  {r.verdict === 'flagged' && r.review_status === 'pending' && (
+                  {canManage && r.verdict === 'flagged' && r.review_status === 'pending' && (
                     <button
                       onClick={() => setResolving(r)}
                       className="text-xs font-medium"
@@ -347,22 +353,24 @@ export function AttendancePage() {
                       Review
                     </button>
                   )}
-                  <button
-                    onClick={() => removeAttendance(r)}
-                    disabled={deletingId === r._id}
-                    className="ml-2 p-1 rounded transition-colors hover:bg-black/5 disabled:opacity-50"
-                    style={{ color: 'var(--color-absent)' }}
-                    title="Delete attendance record"
-                    aria-label={`Delete attendance record for ${employeeMap[r.employee_id]?.name ?? r.employee_id}`}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {canManage && (
+                    <button
+                      onClick={() => removeAttendance(r)}
+                      disabled={deletingId === r._id}
+                      className="ml-2 p-1 rounded transition-colors hover:bg-black/5 disabled:opacity-50"
+                      style={{ color: 'var(--color-absent)' }}
+                      title="Delete attendance record"
+                      aria-label={`Delete attendance record for ${employeeMap[r.employee_id]?.name ?? r.employee_id}`}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
             {!loading && records.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
+                <td colSpan={canManage ? 10 : 9} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
                   No records match these filters.
                 </td>
               </tr>

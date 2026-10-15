@@ -5,10 +5,12 @@ import type { Coordinator, Employee } from '../types';
 import { CoordinatorFormModal } from '../components/CoordinatorFormModal';
 import { EnrollFaceModal } from '../components/EnrollFaceModal';
 import { Pencil, ScanFace, Trash2, UserX, UserCheck } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const PAGE_SIZE = 25;
 
 export function CoordinatorsPage() {
+  const { canManage } = useAuth();
   const [coordinators, setCoordinators] = useState<Coordinator[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -72,13 +74,15 @@ export function CoordinatorsPage() {
         <h1 className="text-lg font-medium" style={{ color: 'var(--color-ink)' }}>
           Project Co-Ordinators
         </h1>
-        <button
-          onClick={() => setEditing('new')}
-          className="px-3 py-1.5 rounded-md text-sm font-medium"
-          style={{ background: 'var(--color-accent)', color: 'white' }}
-        >
-          Add project co-ordinator
-        </button>
+        {canManage && (
+          <button
+            onClick={() => setEditing('new')}
+            className="px-3 py-1.5 rounded-md text-sm font-medium"
+            style={{ background: 'var(--color-accent)', color: 'white' }}
+          >
+            Add project co-ordinator
+          </button>
+        )}
       </div>
 
       <div className="mb-5">
@@ -95,7 +99,7 @@ export function CoordinatorsPage() {
         />
       </div>
 
-      {editing && (
+      {canManage && editing && (
         <CoordinatorFormModal
           coordinator={editing === 'new' ? undefined : editing}
           onClose={() => setEditing(null)}
@@ -116,7 +120,7 @@ export function CoordinatorsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: 'var(--color-surface-sunken)' }}>
-              {['ID', 'Name', 'Phone', 'Attendance site', 'Status', 'Action'].map((h) => (
+              {['ID', 'Name', 'Phone', 'Attendance site', 'Status', ...(canManage ? ['Action'] : [])].map((h) => (
                 <th
                   key={h}
                   className={`px-4 py-2.5 text-xs font-medium ${h === 'Action' ? 'text-right' : 'text-left'}`}
@@ -149,7 +153,7 @@ export function CoordinatorsPage() {
                   {c.is_active ? 'Active' : `Inactive since ${c.deactivated_at ?? '—'}`}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <button
+                  {canManage && <button
                     onClick={() => setEnrolling({
                       employee_id: c.pc_id,
                       phone_number: c.phone_number ?? '',
@@ -172,24 +176,24 @@ export function CoordinatorsPage() {
                     title="Enroll face"
                   >
                     <ScanFace size={16} />
-                  </button>
-                  <button
+                  </button>}
+                  {canManage && <button
                     onClick={() => setEditing(c)}
                     className="p-1.5 rounded-md transition-colors hover:bg-[var(--color-accent-bg)]"
                     style={{ color: 'var(--color-accent)' }}
                     title="Edit coordinator attendance settings"
                   >
                     <Pencil size={16} />
-                  </button>
-                  <button
+                  </button>}
+                  {canManage && <button
                     onClick={() => toggleActive(c)}
                     className="p-1.5 rounded-md transition-colors hover:bg-black/5"
                     style={{ color: 'var(--color-ink-muted)' }}
                     title={c.is_active ? 'Deactivate' : 'Reactivate'}
                   >
                     {c.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
-                  </button>
-                  <button
+                  </button>}
+                  {canManage && <button
                     onClick={() => removeCoordinator(c)}
                     disabled={deletingId === c.pc_id}
                     className="p-1.5 rounded-md transition-colors hover:bg-black/5 disabled:opacity-40"
@@ -198,13 +202,13 @@ export function CoordinatorsPage() {
                     aria-label={`Delete coordinator ${c.name}`}
                   >
                     <Trash2 size={16} />
-                  </button>
+                  </button>}
                 </td>
               </tr>
             ))}
             {!loading && coordinators.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
+                <td colSpan={canManage ? 6 : 5} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
                   No coordinators match these filters.
                 </td>
               </tr>
@@ -238,7 +242,7 @@ export function CoordinatorsPage() {
                 Next
               </button>
             </div>
-            {enrolling && <EnrollFaceModal employee={enrolling} onClose={() => setEnrolling(null)} />}
+            {canManage && enrolling && <EnrollFaceModal employee={enrolling} onClose={() => setEnrolling(null)} />}
           </div>
         )}
       </div>

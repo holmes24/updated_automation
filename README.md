@@ -186,6 +186,16 @@ The supplied `deploy/docker-compose.production.yml` starts backend, one or more 
 
 For local HTTP testing, run `docker compose --env-file backend/.env -f deploy/docker-compose.production.yml -f deploy/docker-compose.local.yml up --build -d`. Open `http://localhost:8080`; MongoDB is available to Compass at `mongodb://localhost:27018`.
 
+### CMS account setup and access roles
+
+Create the initial bootstrap account from the running backend container:
+
+```powershell
+docker compose --env-file backend/.env -f deploy/docker-compose.production.yml -f deploy/docker-compose.local.yml exec backend python scripts/create_admin.py
+```
+
+Sign in with that account and open **User access** to create credentials for staff. Account creation is only available to authorized signed-in users; there is no public registration. `manual_team` accounts can review and change attendance and participant records; `viewer` accounts can view attendance, monthly grids, coordinators, and participants only. Only the bootstrap super-admin can grant manual-team access. Share the assigned credentials with the intended staff member.
+
 ## WhatsApp / Interakt
 
 Configure Interakt to POST signed `message_received` webhooks to:

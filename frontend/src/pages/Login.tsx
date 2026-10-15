@@ -17,7 +17,7 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(username, password);
+      await login(username.trim(), password);
       navigate("/attendance");
     } catch (err) {
       if (axios.isAxiosError(err)) {
@@ -93,6 +93,11 @@ export function LoginPage() {
         </label>
         <input
           autoFocus
+          required
+          minLength={3}
+          maxLength={50}
+          pattern="[A-Za-z0-9_.-]+"
+          autoComplete="username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           className="w-full mb-4 px-3 py-2 rounded-md text-sm border outline-none focus:ring-2"
@@ -112,6 +117,10 @@ export function LoginPage() {
         <div className="relative mb-4">
           <input
             type={showPassword ? "text" : "password"}
+            required
+            minLength={8}
+            maxLength={72}
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="w-full px-3 py-2 pr-16 rounded-md text-sm border outline-none focus:ring-2"

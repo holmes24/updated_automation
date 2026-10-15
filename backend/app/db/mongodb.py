@@ -1105,7 +1105,7 @@ class AdminUser(BaseModel):
     username: str
     password_hash: str
     is_active: bool = True
-    role: str = "super_admin"
+    role: Literal["super_admin", "manual_team", "viewer"] = "super_admin"
     pc_id: str | None = None
 
 
@@ -1117,10 +1117,24 @@ async def get_admin_user(username: str) -> AdminUser | None:
     return AdminUser(**doc)
 
 
+async def list_admin_users() -> list[dict]:
+    """Return account metadata without password hashes."""
+    cursor = get_db().admin_users.find(
+        {},
+        {"_id": 0, "username": 1, "role": 1, "is_active": 1},
+    ).sort("username", 1)
+    users = []
+    async for doc in cursor:
+        doc.setdefault("role", "super_admin")
+        doc.setdefault("is_active", True)
+        users.append(doc)
+    return users
+
+
 async def create_admin_user(
     username: str,
     password_hash: str,
-    role: str = "super_admin",
+    role: Literal["super_admin", "manual_team", "viewer"] = "super_admin",
     pc_id: str | None = None,
 ) -> AdminUser:
     db = get_db()

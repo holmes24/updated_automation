@@ -114,15 +114,25 @@ export interface AttendanceRecord {
   received_at_utc: string;
 }
 
+export type AccountRole = 'super_admin' | 'manual_team' | 'viewer';
+
 export interface AdminUser {
   username: string;
-  role: 'super_admin';
+  role: AccountRole;
   pc_id: string | null;
 }
 
 export interface LoginResponse {
   access_token: string;
   token_type: string;
+  username: string;
+  role: AccountRole;
+}
+
+export interface UserAccount {
+  username: string;
+  role: AccountRole;
+  is_active: boolean;
 }
 
 export interface AppConfig {

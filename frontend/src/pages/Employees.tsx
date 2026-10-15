@@ -6,10 +6,12 @@ import type { Coordinator, Employee } from '../types';
 import { EmployeeFormModal } from '../components/EmployeeFormModal';
 import { EnrollFaceModal } from '../components/EnrollFaceModal';
 import { ScanFace, Pencil, Trash2, UserX, UserCheck } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const PAGE_SIZE = 25;
 
 export function EmployeesPage() {
+  const { canManage } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -96,13 +98,15 @@ export function EmployeesPage() {
             Set each person’s department and reporting line. Older records without a saved department default to FS.
           </p>
         </div>
-        <button
-          onClick={() => setEditing('new')}
-          className="px-3 py-1.5 rounded-md text-sm font-medium"
-          style={{ background: 'var(--color-accent)', color: 'white' }}
-        >
-          Add participant
-        </button>
+        {canManage && (
+          <button
+            onClick={() => setEditing('new')}
+            className="px-3 py-1.5 rounded-md text-sm font-medium"
+            style={{ background: 'var(--color-accent)', color: 'white' }}
+          >
+            Add participant
+          </button>
+        )}
       </div>
 
       <div className="flex gap-2 mb-5 items-center flex-wrap">
@@ -150,7 +154,7 @@ export function EmployeesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: 'var(--color-surface-sunken)' }}>
-              {['ID', 'Name', 'Department', 'Coordinator', 'Reports To', 'Area', 'Designation', 'Status', 'Action'].map((h) => (
+              {['ID', 'Name', 'Department', 'Coordinator', 'Reports To', 'Area', 'Designation', 'Status', ...(canManage ? ['Action'] : [])].map((h) => (
                 <th
                   key={h}
                   className={`px-4 py-2.5 text-xs font-medium ${h === 'Action' ? 'text-right' : 'text-left'}`}
@@ -196,7 +200,7 @@ export function EmployeesPage() {
                   {emp.is_active ? 'Active' : `Inactive since ${emp.deactivated_at}`}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <div className="flex items-center justify-end gap-1">
+                  {canManage && <div className="flex items-center justify-end gap-1">
                     <button
                       onClick={() => setEnrolling(emp)}
                       className="p-1.5 rounded-md transition-colors hover:bg-[var(--color-accent-bg)]"
@@ -231,13 +235,13 @@ export function EmployeesPage() {
                     >
                       <Trash2 size={16} />
                     </button>
-                  </div>
+                  </div>}
                 </td>
               </tr>
             ))}
             {!loading && employees.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
+                <td colSpan={canManage ? 9 : 8} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-ink-faint)' }}>
                   No attendance participants match these filters.
                 </td>
               </tr>
@@ -275,7 +279,7 @@ export function EmployeesPage() {
         )}
       </div>
 
-      {editing && (
+      {canManage && editing && (
         <EmployeeFormModal
           employee={editing === 'new' ? null : editing}
           coordinators={coordinators}
@@ -288,7 +292,7 @@ export function EmployeesPage() {
         />
       )}
 
-      {enrolling && <EnrollFaceModal employee={enrolling} onClose={() => setEnrolling(null)} />}
+      {canManage && enrolling && <EnrollFaceModal employee={enrolling} onClose={() => setEnrolling(null)} />}
     </div>
   );
 }

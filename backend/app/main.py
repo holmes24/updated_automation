@@ -14,10 +14,16 @@ from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
-from typing import Literal
+from pydantic import BaseModel, Field, field_validator
 
-from app.auth import create_access_token, get_current_admin, verify_api_key, verify_password
+from app.auth import (
+    create_access_token,
+    get_current_admin,
+    get_current_user,
+    hash_password,
+    verify_api_key,
+    verify_password,
+)
 from app.config import settings
 from app.db.mongodb import (
     AdminUser,
@@ -27,7 +33,9 @@ from app.db.mongodb import (
     EmployeeUpdateRequest,
     ensure_indexes,
     get_admin_user,
+    create_admin_user,
     get_db,
+    list_admin_users,
     get_roster_by_employee_id,
     get_submissions_grouped,
     list_attendance,
@@ -75,6 +83,19 @@ app.add_middleware(
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class UserRegistrationRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9_.-]+$")
+    password: str = Field(min_length=8, max_length=72)
+    role: Literal["manual_team", "viewer"] = "viewer"
+
+    @field_validator("password")
+    @classmethod
+    def password_fits_bcrypt(cls, password: str) -> str:
+        if len(password.encode("utf-8")) > 72:
+            raise ValueError("password must be at most 72 UTF-8 bytes")
+        return password
 
 
 class ResolveRequest(BaseModel):
@@ -225,8 +246,8 @@ async def login(request: LoginRequest, _: None = Depends(verify_api_key)):
     """
     CMS login — returns a JWT access token (valid for
     settings.jwt_expire_minutes). Pass it as `Authorization: Bearer <token>`
-    on protected endpoints. There is no public registration endpoint —
-    admin accounts are created via scripts/create_admin.py.
+    Bootstrap super-admins are created via scripts/create_admin.py.
+    Remaining accounts are created by authorized users in the CMS.
     """
     admin = await get_admin_user(request.username)
     unauthorized = HTTPException(status_code=401, detail="Incorrect username or password")
@@ -235,11 +256,50 @@ async def login(request: LoginRequest, _: None = Depends(verify_api_key)):
     if not verify_password(request.password, admin.password_hash):
         raise unauthorized
     token = create_access_token(admin.username)
-    return {"access_token": token, "token_type": "bearer"}
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": admin.username,
+        "role": admin.role,
+    }
+
+
+@app.get("/auth/me")
+async def get_current_user_details(user: AdminUser = Depends(get_current_user)):
+    """Return authenticated account metadata for frontend role handling."""
+    return {"username": user.username, "role": user.role}
+
+
+@app.get("/auth/users")
+async def get_users(_: AdminUser = Depends(get_current_admin)):
+    """List account metadata without exposing password hashes."""
+    return {"users": await list_admin_users()}
+
+
+@app.post("/auth/users", status_code=201)
+async def create_user(
+    request: UserRegistrationRequest,
+    admin: AdminUser = Depends(get_current_admin),
+):
+    """Create an account; only bootstrap super-admins may grant manual-team access."""
+    if request.role == "manual_team" and admin.role != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only a super-admin can create manual-team accounts",
+        )
+    try:
+        user = await create_admin_user(
+            request.username,
+            hash_password(request.password),
+            role=request.role,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"username": user.username, "role": user.role, "is_active": user.is_active}
 
 
 @app.get("/config")
-async def get_config(admin: AdminUser = Depends(get_current_admin)):
+async def get_config(admin: AdminUser = Depends(get_current_user)):
     """
     Read-only — non-biometric thresholds currently enforced by the
     pipeline, so the frontend never hardcodes a value that could drift
@@ -316,7 +376,7 @@ async def get_coordinators(
     search: str | None = None,
     page: int = 1,
     page_size: int = 50,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_user),
 ):
     """
     List Project Coordinators, or look up one specific PC via pc_id.
@@ -415,7 +475,7 @@ async def get_employees(
     search: str | None = None,
     page: int = 1,
     page_size: int = 50,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_user),
 ):
     """
     Roster listing for the CMS — all filters optional, combine any of them.
@@ -439,7 +499,7 @@ async def get_attendance_grid(
     year: int,
     pc_id: str | None = None,
     role: Literal["PC", "FS", "LS", "LSS"] | None = None,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_user),
 ):
     """Return monthly attendance for PC, FS, LS, and LSS participants."""
     import calendar
@@ -526,7 +586,7 @@ async def get_attendance(
     search: str | None = None,
     page: int = 1,
     page_size: int = 50,
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_user),
 ):
     """
     Attendance submission records for the CMS — filterable by employee,
