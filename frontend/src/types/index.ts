@@ -61,6 +61,7 @@ export interface AttendanceGrid {
 export type ShiftStatus =
   | 'on_time'
   | 'late'
+  | 'after_grace'
   | 'before_window'
   | 'after_window'
   | 'unparseable'

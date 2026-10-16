@@ -95,6 +95,8 @@ export function ShiftStatusBadge({ status, skipped }: { status: ShiftStatus | un
   switch (status) {
     case 'late':
       return badge('Late', 'var(--color-late)', 'var(--color-late-bg)');
+    case 'after_grace':
+      return badge('After grace', 'var(--color-absent)', 'var(--color-absent-bg)');
     case 'before_window':
       return badge('Before shift', 'var(--color-ink-muted)', 'var(--color-surface-raised)');
     case 'after_window':

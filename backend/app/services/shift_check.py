@@ -5,15 +5,14 @@ check-in window. Per-employee shift_start/shift_end/shift_grace_minutes
 when present — most employees use the default, but a site with a
 different shift pattern can be set individually.
 
-Returns one of five statuses:
-  "on_time"        -> within grace_minutes of shift start (either side)
-  "late"           -> after the grace window, but still before shift end —
+Returns a shift status:
+  "on_time"        -> at or before shift start
+  "late"           -> after shift start but within grace_minutes —
                        NOT a failure, doesn't get flagged for admin review,
                        just shows as "L" instead of "P" in the export
-  "before_window"  -> genuine failure (submitted implausibly early)
-  "after_window"   -> genuine failure (submitted after shift end)
-  "unparseable"    -> configured shift time couldn't be parsed — fails
-                       safe (treated as a failure, flagged for review)
+  "after_grace"    -> after the grace period — attendance is classified as AL,
+                       but shift timing alone does not flag the submission
+  "unparseable"    -> configured shift time couldn't be parsed
 """
 import logging
 from datetime import datetime, time
@@ -29,6 +28,7 @@ logger = logging.getLogger("shift_check")
 NON_FAILURE_STATUSES = {
     "on_time",
     "late",
+    "after_grace",
     "before_window",
     "after_window",
     "unparseable",
@@ -54,8 +54,8 @@ def check_shift_window(
     employee_grace_minutes: int | None = None,
 ) -> tuple[str, str]:
     """
-    Returns (status, reason) — status is one of the five values documented
-    above. Caller decides what to do with each (see NON_FAILURE_STATUSES).
+    Returns (status, reason). Caller decides whether the status should add
+    an issue (see NON_FAILURE_STATUSES).
     """
     start_str = employee_shift_start or settings.shift_window_start
     end_str = employee_shift_end or settings.shift_window_end
